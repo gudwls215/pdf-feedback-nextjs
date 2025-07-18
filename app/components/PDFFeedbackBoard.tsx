@@ -2,16 +2,33 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { Upload, Play, Square, ChevronLeft, ChevronRight, Pen, Type, Eraser, MousePointer, Minus, Plus } from 'lucide-react';
-import * as pdfjsLib from 'pdfjs-dist';
+
+// 타입 정의
+type PDFDocumentProxy = {
+  numPages: number;
+  getPage: (pageNumber: number) => Promise<any>;
+};
+
+type RecorderType = {
+  startRecording: () => void;
+  stopRecording: (callback: () => void) => void;
+  getBlob: () => Blob;
+};
 
 const PDFFeedbackBoard: React.FC = () => {
   const [isRecording, setIsRecording] = useState(false);
   const [pdfLoaded, setPdfLoaded] = useState(false);
-  const [pdfDocument, setPdfDocument] = useState<pdfjsLib.PDFDocumentProxy | null>(null);
+  const [pdfDocument, setPdfDocument] = useState<PDFDocumentProxy | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(0);
   const [scale, setScale] = useState(1.5);
   const [loading, setLoading] = useState(false);
+  
+  // 녹화 관련 상태
+  const [recorder, setRecorder] = useState<RecorderType | null>(null);
+  const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
+  const [recordingTime, setRecordingTime] = useState(0);
+  const recordingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   
   // 화이트보드 관련 상태
   const [selectedTool, setSelectedTool] = useState<'pointer' | 'pen' | 'text' | 'eraser' | 'mask'>('pointer');
@@ -39,7 +56,10 @@ const PDFFeedbackBoard: React.FC = () => {
   // PDF.js worker 설정
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdfjs/pdf.worker.min.js';
+      // PDF.js 동적 임포트
+      import('pdfjs-dist').then((pdfjsLib) => {
+        pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdfjs/pdf.worker.min.js';
+      });
     }
   }, []);
 
@@ -88,6 +108,9 @@ const PDFFeedbackBoard: React.FC = () => {
     setLoading(true);
     try {
       const arrayBuffer = await file.arrayBuffer();
+      
+      // PDF.js 동적 임포트
+      const pdfjsLib = await import('pdfjs-dist');
       const loadingTask = pdfjsLib.getDocument(arrayBuffer);
       const pdf = await loadingTask.promise;
       
@@ -108,7 +131,7 @@ const PDFFeedbackBoard: React.FC = () => {
     }
   };
 
-  const renderPage = async (pdf: pdfjsLib.PDFDocumentProxy, pageNumber: number, customScale?: number) => {
+  const renderPage = async (pdf: PDFDocumentProxy, pageNumber: number, customScale?: number) => {
     if (!canvasRef.current) {
       console.log('Canvas not ready');
       return;
@@ -433,9 +456,106 @@ const PDFFeedbackBoard: React.FC = () => {
     clearOverlay();
   };
 
-  const toggleRecording = () => {
-    setIsRecording(!isRecording);
+  // 녹화 관련 함수들
+  const startRecording = async () => {
+    try {
+      // 화면 캡처 시작
+      const stream = await navigator.mediaDevices.getDisplayMedia({
+        video: {
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+          frameRate: { ideal: 30 }
+        },
+        audio: true // 시스템 오디오와 마이크 포함
+      });
+
+      // RecordRTC 동적 임포트
+      const RecordRTC = (await import('recordrtc')).default;
+
+      // RecordRTC 설정
+      const options = {
+        type: 'video' as const,
+        mimeType: 'video/webm;codecs=vp9' as const,
+        bitsPerSecond: 8000000, // 8Mbps
+        videoBitsPerSecond: 6000000,
+        audioBitsPerSecond: 128000
+      };
+
+      const recordRTC = new RecordRTC(stream, options);
+      recordRTC.startRecording();
+      
+      setRecorder(recordRTC);
+      setIsRecording(true);
+      setRecordingTime(0);
+      
+      // 녹화 시간 카운터 시작
+      recordingIntervalRef.current = setInterval(() => {
+        setRecordingTime(prev => prev + 1);
+      }, 1000);
+      
+      console.log('화면 녹화가 시작되었습니다.');
+      
+      // 스트림 종료 이벤트 처리 (사용자가 브라우저에서 공유 중지한 경우)
+      stream.getVideoTracks()[0].addEventListener('ended', () => {
+        stopRecording();
+      });
+      
+    } catch (error) {
+      console.error('녹화 시작 실패:', error);
+      alert('화면 녹화를 시작할 수 없습니다. 브라우저에서 화면 공유 권한을 허용해주세요.');
+    }
   };
+
+  const stopRecording = () => {
+    if (!recorder) return;
+    
+    recorder.stopRecording(() => {
+      const blob = recorder.getBlob();
+      setRecordedBlob(blob);
+      
+      // 녹화 파일 다운로드
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `pdf-feedback-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.webm`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      
+      console.log('녹화가 완료되었습니다.');
+    });
+    
+    setRecorder(null);
+    setIsRecording(false);
+    setRecordingTime(0);
+    
+    // 녹화 시간 카운터 중지
+    if (recordingIntervalRef.current) {
+      clearInterval(recordingIntervalRef.current);
+      recordingIntervalRef.current = null;
+    }
+  };
+
+  const toggleRecording = () => {
+    if (isRecording) {
+      stopRecording();
+    } else {
+      startRecording();
+    }
+  };
+
+  // 컴포넌트 언마운트 시 정리
+  useEffect(() => {
+    return () => {
+      if (recordingIntervalRef.current) {
+        clearInterval(recordingIntervalRef.current);
+      }
+      if (recorder) {
+        recorder.stopRecording(() => {});
+      }
+    };
+  }, [recorder]);
 
   return (
     <div className="flex flex-col h-[90vh] bg-white rounded-lg shadow-lg">
@@ -566,6 +686,11 @@ const PDFFeedbackBoard: React.FC = () => {
         >
           {isRecording ? <Square size={16} /> : <Play size={16} />}
           <span>{isRecording ? '녹화 중지' : '녹화 시작'}</span>
+          {isRecording && (
+            <span className="bg-red-800 px-2 py-1 rounded text-sm">
+              {Math.floor(recordingTime / 60)}:{(recordingTime % 60).toString().padStart(2, '0')}
+            </span>
+          )}
         </button>
       </div>
 
@@ -781,7 +906,14 @@ const PDFFeedbackBoard: React.FC = () => {
               {isRecording && (
                 <div className="flex items-center space-x-2 px-3 py-2 bg-red-100 text-red-600 rounded-lg text-sm">
                   <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
-                  <span>녹화 중...</span>
+                  <span>녹화 중 ({Math.floor(recordingTime / 60)}:{(recordingTime % 60).toString().padStart(2, '0')})</span>
+                </div>
+              )}
+              
+              {/* 녹화된 파일이 있을 때 안내 */}
+              {recordedBlob && !isRecording && (
+                <div className="flex items-center space-x-2 px-3 py-2 bg-green-100 text-green-600 rounded-lg text-sm">
+                  <span>✓ 녹화 완료 - 파일이 다운로드되었습니다</span>
                 </div>
               )}
             </div>
