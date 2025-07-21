@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Upload, Play, Square, ChevronLeft, ChevronRight, Pen, Type, Eraser, MousePointer, Minus, Plus } from 'lucide-react';
+import { Upload, Play, Square, ChevronLeft, ChevronRight, Pen, Type, Eraser, MousePointer, Minus, Plus, Share, Users, Copy, ExternalLink } from 'lucide-react';
 
 // 타입 정의
 type PDFDocumentProxy = {
@@ -13,6 +13,9 @@ type RecorderType = {
   startRecording: () => void;
   stopRecording: (callback: () => void) => void;
   getBlob: () => Blob;
+  destroy?: () => void;
+  getInternalRecorder?: () => any;
+  getState?: () => string;
 };
 
 const PDFFeedbackBoard: React.FC = () => {
@@ -28,7 +31,34 @@ const PDFFeedbackBoard: React.FC = () => {
   const [recorder, setRecorder] = useState<RecorderType | null>(null);
   const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
   const [recordingTime, setRecordingTime] = useState(0);
+  const [recordedFiles, setRecordedFiles] = useState<{name: string, blob: Blob, timestamp: Date}[]>([]);
+  const [showFileList, setShowFileList] = useState(false);
   const recordingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // 실시간 스트리밍 관련 상태
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [streamingTime, setStreamingTime] = useState(0);
+  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+  const [showStreamingModal, setShowStreamingModal] = useState(false);
+  const [streamingUrl, setStreamingUrl] = useState('');
+  const [connectionStatus, setConnectionStatus] = useState<'disconnected' | 'connecting' | 'connected' | 'failed'>('disconnected');
+  const [viewerCount, setViewerCount] = useState(0);
+  const streamingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const socketRef = useRef<any>(null);
+  const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
+  const streamIdRef = useRef<string>('');
+  
+  // 뷰어 연결 대기 큐
+  const pendingViewersRef = useRef<string[]>([]);
+  const isStreamReadyRef = useRef<boolean>(false);
+  const localStreamRef = useRef<MediaStream | null>(null); // 즉시 접근 가능한 스트림 ref
+  
+  // WebRTC 설정
+  const rtcConfiguration = {
+    iceServers: [
+      { urls: 'stun:stun.l.google.com:19302' }
+    ]
+  };
   
   // 화이트보드 관련 상태
   const [selectedTool, setSelectedTool] = useState<'pointer' | 'pen' | 'text' | 'eraser' | 'mask'>('pointer');
@@ -52,6 +82,47 @@ const PDFFeedbackBoard: React.FC = () => {
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
   const textInputRef = useRef<HTMLInputElement>(null);
   const boardRef = useRef<HTMLDivElement>(null);
+
+  // 스트리밍 시간 업데이트를 위한 useEffect
+  useEffect(() => {
+    if (isStreaming && !streamingIntervalRef.current) {
+      streamingIntervalRef.current = setInterval(() => {
+        setStreamingTime(prev => prev + 1);
+      }, 1000);
+    } else if (!isStreaming && streamingIntervalRef.current) {
+      clearInterval(streamingIntervalRef.current);
+      streamingIntervalRef.current = null;
+    }
+
+    return () => {
+      if (streamingIntervalRef.current) {
+        clearInterval(streamingIntervalRef.current);
+        streamingIntervalRef.current = null;
+      }
+    };
+  }, [isStreaming]);
+
+  // 녹화 시간 업데이트를 위한 별도 useEffect
+  useEffect(() => {
+    if (isRecording && !recordingIntervalRef.current) {
+      recordingIntervalRef.current = setInterval(() => {
+        setRecordingTime(prev => {
+          //console.log('Recording time updated:', prev + 1); // 디버그용
+          return prev + 1;
+        });
+      }, 1000);
+    } else if (!isRecording && recordingIntervalRef.current) {
+      clearInterval(recordingIntervalRef.current);
+      recordingIntervalRef.current = null;
+    }
+
+    return () => {
+      if (recordingIntervalRef.current) {
+        clearInterval(recordingIntervalRef.current);
+        recordingIntervalRef.current = null;
+      }
+    };
+  }, [isRecording]);
 
   // PDF.js worker 설정
   useEffect(() => {
@@ -456,85 +527,842 @@ const PDFFeedbackBoard: React.FC = () => {
     clearOverlay();
   };
 
-  // 녹화 관련 함수들
-  const startRecording = async () => {
+  // 실시간 스트리밍 관련 함수들
+  const connectToSignalingServer = () => {
+    if (typeof window === 'undefined') return null;
+    
+    // Socket.IO 동적 임포트
+    import('socket.io-client').then((io) => {
+      const socket = io.default('http://192.168.0.152:3001', {
+        transports: ['websocket', 'polling']
+      });
+      
+      socketRef.current = socket;
+      
+      socket.on('connect', () => {
+        console.log('시그널링 서버에 연결되었습니다');
+      });
+      
+      socket.on('stream-started', (data) => {
+        console.log('스트림 시작됨:', data);
+      });
+      
+      socket.on('viewer-joined', (data) => {
+        console.log('새 뷰어 참여:', data);
+        setViewerCount(data.viewerCount);
+        
+        // 스트림이 준비된 경우 즉시 연결 시도, 아니면 큐에 추가
+        console.log('스트림 준비 상태:', isStreamReadyRef.current, '로컬 스트림 ref:', !!localStreamRef.current, '로컬 스트림 state:', !!localStream);
+        if (isStreamReadyRef.current && localStreamRef.current) {
+          console.log('스트림 준비됨, 즉시 뷰어 연결 처리:', data.viewerId);
+          setupPeerConnectionForStreamer(data.viewerId);
+        } else if (isStreamReadyRef.current && localStream) {
+          // localStreamRef가 null이지만 state에는 스트림이 있을 때 setupPeerConnection 호출
+          console.log('스트림 준비됨 (state 기반), setupPeerConnection 호출:', data.viewerId);
+          setupPeerConnection(data.viewerId);
+        } else {
+          console.log('스트림이 아직 준비되지 않음, 뷰어를 대기 큐에 추가:', data.viewerId);
+          pendingViewersRef.current.push(data.viewerId);
+        }
+      });
+      
+      socket.on('viewer-left', (data) => {
+        console.log('뷰어 나감:', data);
+        setViewerCount(data.viewerCount);
+      });
+      
+      socket.on('offer', async (data) => {
+        console.log('Offer 수신:', data);
+        await handleOffer(data);
+      });
+      
+      socket.on('answer', async (data) => {
+        console.log('스트리머: Answer 수신:', data);
+        await handleAnswer(data);
+      });
+      
+      socket.on('ice-candidate', async (data) => {
+        console.log('ICE candidate 수신:', data);
+        await handleIceCandidate(data);
+      });
+      
+      socket.on('stream-ended', () => {
+        console.log('스트림 종료됨');
+        stopStreaming();
+      });
+      
+      socket.on('disconnect', () => {
+        console.log('시그널링 서버 연결 해제');
+        setConnectionStatus('disconnected');
+      });
+    });
+  };
+  
+  const setupPeerConnection = async (viewerId: string) => {
+    if (!localStream) return;
+    
+    const peerConnection = new RTCPeerConnection(rtcConfiguration);
+    peerConnectionRef.current = peerConnection;
+    
+    // 로컬 스트림을 peer connection에 추가
+    localStream.getTracks().forEach(track => {
+      peerConnection.addTrack(track, localStream);
+    });
+    
+    // ICE candidate 이벤트
+    peerConnection.onicecandidate = (event) => {
+      if (event.candidate && socketRef.current) {
+        socketRef.current.emit('ice-candidate', {
+          candidate: event.candidate,
+          targetSocketId: viewerId,
+          streamId: streamIdRef.current
+        });
+      }
+    };
+    
+    // Offer 생성 및 전송
     try {
+      const offer = await peerConnection.createOffer();
+      await peerConnection.setLocalDescription(offer);
+      
+      if (socketRef.current) {
+        socketRef.current.emit('offer', {
+          offer,
+          targetSocketId: viewerId,
+          streamId: streamIdRef.current
+        });
+      }
+    } catch (error) {
+      console.error('Offer 생성 실패:', error);
+    }
+  };
+  
+  const setupPeerConnectionForStreamer = async (viewerId: string) => {
+    console.log('스트리머: 새 뷰어를 위한 Peer connection 설정 중...', viewerId);
+    
+    // 로컬 스트림 확인 (ref 사용)
+    const currentStream = localStreamRef.current;
+    if (!currentStream || !isStreamReadyRef.current) {
+      console.error('로컬 스트림이 준비되지 않음:', { 
+        hasLocalStreamRef: !!currentStream, 
+        hasLocalStreamState: !!localStream,
+        isStreamReady: isStreamReadyRef.current 
+      });
+      
+      // 뷰어를 대기 큐에 추가
+      if (!pendingViewersRef.current.includes(viewerId)) {
+        console.log('뷰어를 대기 큐에 추가:', viewerId);
+        pendingViewersRef.current.push(viewerId);
+      }
+      return;
+    }
+    
+    try {
+      const peerConnection = new RTCPeerConnection(rtcConfiguration);
+      
+      console.log('로컬 스트림 트랙들:', currentStream.getTracks().map(t => `${t.kind}: ${t.id}`));
+      
+      // 로컬 스트림을 peer connection에 추가
+      currentStream.getTracks().forEach(track => {
+        console.log('트랙 추가:', track.kind, track.id);
+        peerConnection.addTrack(track, currentStream);
+      });
+      
+      // ICE candidate 이벤트
+      peerConnection.onicecandidate = (event) => {
+        if (event.candidate && socketRef.current) {
+          console.log('스트리머: ICE candidate 전송:', event.candidate.candidate);
+          socketRef.current.emit('ice-candidate', {
+            candidate: event.candidate,
+            targetSocketId: viewerId,
+            streamId: streamIdRef.current
+          });
+        }
+      };
+      
+      // 연결 상태 변경
+      peerConnection.onconnectionstatechange = () => {
+        console.log('스트리머 연결 상태:', peerConnection.connectionState);
+      };
+      
+      // ICE 연결 상태 변경
+      peerConnection.oniceconnectionstatechange = () => {
+        console.log('스트리머 ICE 연결 상태:', peerConnection.iceConnectionState);
+      };
+      
+      // Offer 생성 및 전송
+      console.log('Offer 생성 중...');
+      const offer = await peerConnection.createOffer();
+      await peerConnection.setLocalDescription(offer);
+      
+      console.log('Offer 생성 완료:', {
+        type: offer.type,
+        sdp: offer.sdp?.substring(0, 100) + '...'
+      });
+      
+      if (socketRef.current) {
+        socketRef.current.emit('offer', {
+          offer,
+          targetSocketId: viewerId,
+          streamId: streamIdRef.current
+        });
+        console.log('스트리머: Offer 전송됨 -> 뷰어:', viewerId);
+      } else {
+        console.error('Socket이 연결되지 않음');
+      }
+      
+      // 이 peer connection을 저장 (여러 뷰어 지원을 위해서는 Map을 사용해야 함)
+      peerConnectionRef.current = peerConnection;
+      
+    } catch (error) {
+      console.error('스트리머: Peer connection 설정 실패:', error);
+    }
+  };
+  
+  // 대기 중인 뷰어들 처리
+  const processPendingViewers = () => {
+    if (!isStreamReadyRef.current || !localStreamRef.current) {
+      console.log('스트림이 아직 준비되지 않아 대기 중인 뷰어 처리를 건너뜁니다:', {
+        isStreamReady: isStreamReadyRef.current,
+        hasLocalStreamRef: !!localStreamRef.current,
+        hasLocalStreamState: !!localStream
+      });
+      return;
+    }
+    
+    const pendingViewers = [...pendingViewersRef.current];
+    pendingViewersRef.current = []; // 큐 초기화
+    
+    console.log('대기 중인 뷰어들 처리:', pendingViewers);
+    
+    pendingViewers.forEach((viewerId) => {
+      console.log('대기 중인 뷰어 연결 처리:', viewerId);
+      setupPeerConnectionForStreamer(viewerId);
+    });
+  };
+  
+  const handleOffer = async (data: any) => {
+    // 이 함수는 뷰어 측에서 사용됩니다
+    // 스트리머는 offer를 받지 않으므로 현재는 비어있습니다
+  };
+  
+  const handleAnswer = async (data: any) => {
+    console.log('스트리머: Answer 처리 중...', data);
+    if (peerConnectionRef.current) {
+      try {
+        await peerConnectionRef.current.setRemoteDescription(data.answer);
+        console.log('스트리머: Answer 처리 완료 - WebRTC 연결 설정됨');
+      } catch (error) {
+        console.error('스트리머: Answer 처리 실패:', error);
+      }
+    } else {
+      console.error('스트리머: PeerConnection이 없습니다');
+    }
+  };
+  
+  const handleIceCandidate = async (data: any) => {
+    console.log('스트리머: ICE candidate 수신:', data);
+    if (peerConnectionRef.current) {
+      try {
+        await peerConnectionRef.current.addIceCandidate(data.candidate);
+        console.log('스트리머: ICE candidate 추가 완료');
+      } catch (error) {
+        console.error('스트리머: ICE candidate 추가 실패:', error);
+      }
+    } else {
+      console.error('스트리머: PeerConnection이 없습니다');
+    }
+  };
+
+  const startStreaming = async () => {
+    try {
+      console.log('Starting live streaming...');
+      setConnectionStatus('connecting');
+      
       // 화면 캡처 시작
-      const stream = await navigator.mediaDevices.getDisplayMedia({
+      const displayStream = await navigator.mediaDevices.getDisplayMedia({
         video: {
           width: { ideal: 1920 },
           height: { ideal: 1080 },
           frameRate: { ideal: 30 }
         },
-        audio: true // 시스템 오디오와 마이크 포함
+        audio: true // 시스템 오디오
       });
 
-      // RecordRTC 동적 임포트
-      const RecordRTC = (await import('recordrtc')).default;
+      // 마이크 오디오 캡처 시작
+      let micStream: MediaStream | null = null;
+      try {
+        micStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true
+          }
+        });
+        console.log('마이크 오디오 캡처 성공');
+      } catch (micError) {
+        console.warn('마이크 접근 실패, 화면 오디오만 스트리밍합니다:', micError);
+      }
 
-      // RecordRTC 설정
+      // 오디오 스트림 합성
+      let finalStream = displayStream;
+      
+      if (micStream && displayStream.getAudioTracks().length > 0) {
+        // 화면 오디오와 마이크 오디오를 모두 합성
+        const audioContext = new AudioContext();
+        const destination = audioContext.createMediaStreamDestination();
+        
+        // 화면 오디오 추가
+        const displayAudioSource = audioContext.createMediaStreamSource(displayStream);
+        displayAudioSource.connect(destination);
+        
+        // 마이크 오디오 추가
+        const micAudioSource = audioContext.createMediaStreamSource(micStream);
+        micAudioSource.connect(destination);
+        
+        // 새로운 스트림 생성 (비디오는 기존 것, 오디오는 합성된 것)
+        const videoTrack = displayStream.getVideoTracks()[0];
+        const combinedAudioTrack = destination.stream.getAudioTracks()[0];
+        
+        finalStream = new MediaStream([videoTrack, combinedAudioTrack]);
+        console.log('화면 오디오와 마이크 오디오를 합성했습니다');
+      } else if (micStream) {
+        // 화면 오디오가 없고 마이크만 있는 경우
+        const videoTrack = displayStream.getVideoTracks()[0];
+        const micAudioTrack = micStream.getAudioTracks()[0];
+        finalStream = new MediaStream([videoTrack, micAudioTrack]);
+        console.log('마이크 오디오만 추가했습니다');
+      }
+      
+
+      console.log('최종 스트림 트랙:', !!finalStream);
+      // 스트림을 먼저 저장하고 준비 상태 표시 (state와 ref 모두 설정)
+      setLocalStream(finalStream);
+      localStreamRef.current = finalStream; // ref에도 즉시 저장
+      isStreamReadyRef.current = true; // 스트림 준비 완료 표시
+      console.log('로컬 스트림 설정 완료:', finalStream.getTracks().map(t => t.kind));
+      
+      // 고유한 스트리밍 ID 생성
+      const streamId = Date.now().toString(36) + Math.random().toString(36).substr(2);
+      streamIdRef.current = streamId;
+      const generatedUrl = `${window.location.origin}/stream/${streamId}`;
+      setStreamingUrl(generatedUrl);
+      
+      // 상태 업데이트
+      setIsStreaming(true);
+      setStreamingTime(0);
+      setConnectionStatus('connected');
+      
+      console.log('실시간 스트리밍이 시작되었습니다 (화면 + 마이크)');
+      console.log('스트리밍 URL:', generatedUrl);
+      
+      // 로컬 스트림이 준비된 후에 시그널링 서버에 연결
+      connectToSignalingServer();
+      
+      // 약간의 지연 후 스트림 시작 알림 및 대기 중인 뷰어 처리
+      setTimeout(() => {
+        if (socketRef.current) {
+          console.log('시그널링 서버에 스트림 시작 알림 전송');
+          socketRef.current.emit('start-stream', { streamId });
+          
+          // 대기 중인 뷰어들 처리
+          processPendingViewers();
+        } else {
+          console.error('시그널링 서버가 아직 연결되지 않음');
+        }
+      }, 2000);
+      
+      // 스트림 종료 이벤트 처리
+      finalStream.getVideoTracks()[0].addEventListener('ended', () => {
+        console.log('Video track ended, stopping streaming...');
+        stopStreaming();
+      });
+      
+    } catch (error) {
+      console.error('스트리밍 시작 실패:', error);
+      setConnectionStatus('failed');
+      
+      let errorMessage = '실시간 스트리밍을 시작할 수 없습니다.';
+      if (error instanceof Error) {
+        if (error.name === 'NotAllowedError') {
+          errorMessage = '화면 공유 또는 마이크 권한이 거부되었습니다. 브라우저에서 권한을 허용해주세요.';
+        } else if (error.name === 'NotSupportedError') {
+          errorMessage = '이 브라우저에서는 화면 공유를 지원하지 않습니다.';
+        } else if (error.name === 'NotFoundError') {
+          errorMessage = '화면 공유 소스 또는 마이크를 찾을 수 없습니다.';
+        }
+      }
+      
+      alert(errorMessage);
+      
+      // 실패 시 상태 리셋
+      setIsStreaming(false);
+      setLocalStream(null);
+      setStreamingTime(0);
+      setConnectionStatus('disconnected');
+    }
+  };
+
+  const stopStreaming = () => {
+    console.log('Stopping streaming...');
+    
+    // 시그널링 서버에 스트림 종료 알림
+    if (socketRef.current && streamIdRef.current) {
+      socketRef.current.emit('stop-stream', { streamId: streamIdRef.current });
+      socketRef.current.disconnect();
+      socketRef.current = null;
+    }
+    
+    // Peer connection 정리
+    if (peerConnectionRef.current) {
+      peerConnectionRef.current.close();
+      peerConnectionRef.current = null;
+    }
+    
+    if (localStream) {
+      // 모든 트랙 정지
+      localStream.getTracks().forEach(track => {
+        try {
+          track.stop();
+          console.log('Stream track stopped:', track.kind);
+        } catch (error) {
+          console.error('Error stopping track:', error);
+        }
+      });
+      
+      setLocalStream(null);
+    }
+    
+    // 스트림 준비 상태와 대기 큐 초기화
+    isStreamReadyRef.current = false;
+    localStreamRef.current = null; // ref도 초기화
+    pendingViewersRef.current = [];
+    
+    setIsStreaming(false);
+    setStreamingTime(0);
+    setConnectionStatus('disconnected');
+    setStreamingUrl('');
+    setViewerCount(0);
+    streamIdRef.current = '';
+    
+    console.log('실시간 스트리밍이 종료되었습니다');
+  };
+
+  const toggleStreaming = () => {
+    if (isStreaming) {
+      stopStreaming();
+    } else {
+      startStreaming();
+    }
+  };
+
+  // URL 복사 함수
+  const copyStreamingUrl = async () => {
+    if (!streamingUrl) return;
+    
+    try {
+      await navigator.clipboard.writeText(streamingUrl);
+      alert('스트리밍 URL이 클립보드에 복사되었습니다!');
+    } catch (error) {
+      console.error('URL 복사 실패:', error);
+      // fallback - 수동으로 선택할 수 있도록
+      const textArea = document.createElement('textarea');
+      textArea.value = streamingUrl;
+      document.body.appendChild(textArea);
+      textArea.select();
+      try {
+        document.execCommand('copy');
+        alert('스트리밍 URL이 클립보드에 복사되었습니다!');
+      } catch (fallbackError) {
+        alert(`URL을 수동으로 복사해주세요: ${streamingUrl}`);
+      }
+      document.body.removeChild(textArea);
+    }
+  };
+
+  // 녹화 관련 함수들
+  const startRecording = async () => {
+    try {
+      // 이전 recorder가 있으면 먼저 완전히 정리하고 분리
+      if (recorder) {
+        console.log('Cleaning up previous recorder before starting new recording...');
+        
+        // 현재 recorder를 로컬 변수로 복사하여 완전히 분리
+        const oldRecorder = recorder;
+        setRecorder(null); // 즉시 상태를 null로 변경
+        setRecordingTime(0);
+        
+        // 이전 recorder를 별도로 정리 (비동기적으로)
+        setTimeout(async () => {
+          try {
+            await cleanupOldRecorder(oldRecorder);
+          } catch (cleanupError) {
+            console.error('Old recorder cleanup failed:', cleanupError);
+          }
+        }, 100);
+        
+        // 정리 작업이 완료될 때까지 충분히 대기
+        await new Promise(resolve => setTimeout(resolve, 800));
+      }
+      
+      console.log('Starting completely new recording...');
+      
+      // 화면 캡처 시작
+      const displayStream = await navigator.mediaDevices.getDisplayMedia({
+        video: {
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+          frameRate: { ideal: 30 }
+        },
+        audio: true // 시스템 오디오
+      });
+      
+
+      // 마이크 오디오 캡처 시작
+      let micStream: MediaStream | null = null;
+      try {
+        micStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true
+          }
+        });
+        console.log('마이크 오디오 캡처 성공');
+      } catch (micError) {
+        console.warn('마이크 접근 실패, 화면 오디오만 녹화합니다:', micError);
+      }
+
+      // 오디오 스트림 합성
+      let finalStream = displayStream;
+      
+      if (micStream && displayStream.getAudioTracks().length > 0) {
+        // 화면 오디오와 마이크 오디오를 모두 합성
+        const audioContext = new AudioContext();
+        const destination = audioContext.createMediaStreamDestination();
+        
+        // 화면 오디오 추가
+        const displayAudioSource = audioContext.createMediaStreamSource(displayStream);
+        displayAudioSource.connect(destination);
+        
+        // 마이크 오디오 추가
+        const micAudioSource = audioContext.createMediaStreamSource(micStream);
+        micAudioSource.connect(destination);
+        
+        // 새로운 스트림 생성 (비디오는 기존 것, 오디오는 합성된 것)
+        const videoTrack = displayStream.getVideoTracks()[0];
+        const combinedAudioTrack = destination.stream.getAudioTracks()[0];
+        
+        finalStream = new MediaStream([videoTrack, combinedAudioTrack]);
+        console.log('화면 오디오와 마이크 오디오를 합성했습니다');
+      } else if (micStream) {
+        // 화면 오디오가 없고 마이크만 있는 경우
+        const videoTrack = displayStream.getVideoTracks()[0];
+        const micAudioTrack = micStream.getAudioTracks()[0];
+        finalStream = new MediaStream([videoTrack, micAudioTrack]);
+        console.log('마이크 오디오만 추가했습니다');
+      }
+
+      // 완전히 새로운 RecordRTC 인스턴스 생성
+      console.log('Creating completely fresh RecordRTC instance...');
+      
+      // RecordRTC 동적 임포트 (매번 새로 임포트)
+      const RecordRTCModule = await import('recordrtc');
+      const RecordRTC = RecordRTCModule.default;
+
+      // RecordRTC 설정 - 새로운 인스턴스용 최적화된 설정
       const options = {
         type: 'video' as const,
         mimeType: 'video/webm;codecs=vp9' as const,
-        bitsPerSecond: 8000000, // 8Mbps
-        videoBitsPerSecond: 6000000,
-        audioBitsPerSecond: 128000
+        bitsPerSecond: 4000000,
+        videoBitsPerSecond: 3000000,
+        audioBitsPerSecond: 128000,
+        timeSlice: 1000, // 1초마다 데이터 수집
+        checkForInactiveTracks: true,
+        bufferSize: 16384 as const,
+        // 새 인스턴스 보장을 위한 추가 옵션들
+        numberOfAudioChannels: 2 as const,
+        desiredSampRate: 44100
       };
 
-      const recordRTC = new RecordRTC(stream, options);
+      // 완전히 새로운 RecordRTC 객체 생성
+      const recordRTC = new RecordRTC(finalStream, options);
+      console.log('New RecordRTC instance created with fresh stream');
+      
+      // 녹화 시작 전 유효성 재확인
+      console.log('Validating new recorder before start...');
+      
+      // 스트림 유효성 확인
+      const videoTracks = finalStream.getVideoTracks();
+      const audioTracks = finalStream.getAudioTracks();
+      console.log('Video tracks:', videoTracks.length, 'Audio tracks:', audioTracks.length);
+      
+      if (videoTracks.length === 0) {
+        throw new Error('No video tracks available');
+      }
+      
+      // RecordRTC 내부 상태 초기화 확인
+      try {
+        const internalRecorder = recordRTC.getInternalRecorder?.();
+        console.log('Internal recorder type:', internalRecorder?.constructor?.name || 'unknown');
+      } catch (checkError) {
+        console.log('Could not check internal recorder:', checkError);
+      }
+      
+      // 녹화 시작
+      console.log('Starting fresh recording...');
       recordRTC.startRecording();
       
+      // 상태 확인 (안전하게)
+      try {
+        const state = recordRTC.getState ? recordRTC.getState() : 'unknown';
+        console.log('Fresh RecordRTC state after start:', state);
+      } catch (stateError) {
+        console.log('Could not get fresh recorder state:', stateError);
+      }
+      
+      // 새 recorder 설정 (이전 recorder는 이미 분리됨)
       setRecorder(recordRTC);
       setIsRecording(true);
       setRecordingTime(0);
       
-      // 녹화 시간 카운터 시작
-      recordingIntervalRef.current = setInterval(() => {
-        setRecordingTime(prev => prev + 1);
-      }, 1000);
-      
-      console.log('화면 녹화가 시작되었습니다.');
+      console.log('새로운 화면 녹화가 시작되었습니다 (마이크 포함)');
       
       // 스트림 종료 이벤트 처리 (사용자가 브라우저에서 공유 중지한 경우)
-      stream.getVideoTracks()[0].addEventListener('ended', () => {
+      videoTracks[0].addEventListener('ended', () => {
+        console.log('Video track ended, stopping recording...');
+        if (recordingTime < 2) {
+          console.warn('Recording stopped too early, may result in empty blob');
+        }
         stopRecording();
       });
       
     } catch (error) {
       console.error('녹화 시작 실패:', error);
-      alert('화면 녹화를 시작할 수 없습니다. 브라우저에서 화면 공유 권한을 허용해주세요.');
+      
+      let errorMessage = '화면 녹화를 시작할 수 없습니다.';
+      if (error instanceof Error) {
+        if (error.name === 'NotAllowedError') {
+          errorMessage = '화면 공유 또는 마이크 권한이 거부되었습니다. 브라우저에서 권한을 허용해주세요.';
+        } else if (error.name === 'NotSupportedError') {
+          errorMessage = '이 브라우저에서는 화면 녹화를 지원하지 않습니다.';
+        } else if (error.name === 'NotFoundError') {
+          errorMessage = '화면 공유 소스 또는 마이크를 찾을 수 없습니다.';
+        }
+      }
+      
+      alert(errorMessage);
+      
+      // 실패 시 상태 리셋
+      setIsRecording(false);
+      setRecorder(null);
+      setRecordingTime(0);
     }
   };
 
   const stopRecording = () => {
-    if (!recorder) return;
+    if (!recorder) {
+      console.log('No recorder to stop');
+      return;
+    }
     
-    recorder.stopRecording(() => {
-      const blob = recorder.getBlob();
-      setRecordedBlob(blob);
-      
-      // 녹화 파일 다운로드
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `pdf-feedback-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.webm`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      
-      console.log('녹화가 완료되었습니다.');
-    });
+    console.log('Stopping recording...');
     
-    setRecorder(null);
+    // 먼저 상태를 변경
     setIsRecording(false);
+    
+    try {
+      recorder.stopRecording(() => {
+        console.log('Recording stopped successfully');
+        
+        try {
+          const blob = recorder.getBlob();
+          console.log('Blob size:', blob ? blob.size : 'null');
+          
+          if (blob && blob.size > 0) {
+            setRecordedBlob(blob);
+            
+            // 파일명 생성
+            const timestamp = new Date();
+            const fileName = `pdf-feedback-${timestamp.toISOString().slice(0, 19).replace(/:/g, '-')}.webm`;
+            
+            // 녹화된 파일 목록에 추가
+            setRecordedFiles(prev => [...prev, {
+              name: fileName,
+              blob: blob,
+              timestamp: timestamp
+            }]);
+            
+            // 녹화 파일 자동 다운로드
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = fileName;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            
+            console.log('녹화가 완료되었습니다. 파일:', fileName);
+          } else {
+            console.error('Recording blob is empty or null');
+            alert('녹화된 데이터가 없습니다. 녹화 시간이 너무 짧거나 오류가 발생했을 수 있습니다.');
+          }
+        } catch (blobError) {
+          console.error('Error processing blob:', blobError);
+          alert('녹화 파일 처리 중 오류가 발생했습니다.');
+        }
+        
+        // 콜백 완료 후 recorder 정리
+        cleanupRecorder();
+      });
+      
+      // 타임아웃을 설정하여 콜백이 실행되지 않을 경우 대비
+      setTimeout(() => {
+        if (recorder) {
+          try {
+            console.log('Timeout fallback: Checking for blob...');
+            const blob = recorder.getBlob();
+            
+            if (blob && blob.size > 0) {
+              console.log('Timeout fallback: Processing blob, size:', blob.size);
+              setRecordedBlob(blob);
+              
+              const timestamp = new Date();
+              const fileName = `pdf-feedback-${timestamp.toISOString().slice(0, 19).replace(/:/g, '-')}.webm`;
+              
+              setRecordedFiles(prev => [...prev, {
+                name: fileName,
+                blob: blob,
+                timestamp: timestamp
+              }]);
+              
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = fileName;
+              document.body.appendChild(a);
+              a.click();
+              document.body.removeChild(a);
+              URL.revokeObjectURL(url);
+              
+              console.log('녹화가 완료되었습니다 (타임아웃 처리). 파일:', fileName);
+            } else {
+              console.log('Timeout fallback: No valid blob available');
+            }
+          } catch (timeoutError) {
+            console.error('Timeout fallback error:', timeoutError);
+          }
+          
+          // 타임아웃에서도 정리
+          cleanupRecorder();
+        }
+      }, 3000); // 3초 타임아웃
+      
+    } catch (error) {
+      console.error('Recording stop error:', error);
+      
+      // 에러가 발생해도 기본적인 정리 작업은 수행
+      try {
+        const blob = recorder.getBlob();
+        if (blob && blob.size > 0) {
+          setRecordedBlob(blob);
+          console.log('Emergency blob save completed, size:', blob.size);
+        } else {
+          console.log('Emergency: No valid blob available');
+        }
+      } catch (blobError) {
+        console.error('Emergency blob save failed:', blobError);
+      }
+      
+      cleanupRecorder();
+    }
+  };
+
+  // Recorder 정리 함수 - 기존 인스턴스 완전 분리용
+  const cleanupOldRecorder = async (oldRecorder: RecorderType) => {
+    if (!oldRecorder) {
+      console.log('No old recorder to cleanup');
+      return;
+    }
+    
+    console.log('Cleaning up old recorder instance...');
+    
+    try {
+      // 1. 스트림 트랙 먼저 정지
+      if (oldRecorder.getInternalRecorder && typeof oldRecorder.getInternalRecorder === 'function') {
+        try {
+          const internalRecorder = oldRecorder.getInternalRecorder();
+          if (internalRecorder && internalRecorder.stream) {
+            console.log('Stopping old recorder tracks...');
+            internalRecorder.stream.getTracks().forEach((track: MediaStreamTrack) => {
+              try {
+                track.stop();
+                console.log('Old track stopped:', track.kind);
+              } catch (trackError) {
+                console.error('Error stopping old track:', trackError);
+              }
+            });
+          }
+        } catch (internalError) {
+          console.error('Error accessing old internal recorder:', internalError);
+        }
+      }
+      
+      // 2. RecordRTC 객체 완전 파괴
+      if (oldRecorder.destroy && typeof oldRecorder.destroy === 'function') {
+        try {
+          // 내부 상태 확인 후 destroy 호출
+          const recorderInternal = (oldRecorder as any).recorder;
+          if (recorderInternal) {
+            // reset 함수가 존재하고 null이 아닌 경우에만 destroy 호출
+            if (recorderInternal.reset && typeof recorderInternal.reset === 'function') {
+              oldRecorder.destroy();
+              console.log('Old recorder destroyed successfully');
+            } else {
+              console.log('Old recorder reset is null, manual cleanup');
+              // 수동으로 내부 상태 정리
+              if (recorderInternal.stream) {
+                recorderInternal.stream.getTracks().forEach((track: MediaStreamTrack) => {
+                  try {
+                    track.stop();
+                  } catch (e) {
+                    console.error('Error in manual cleanup:', e);
+                  }
+                });
+              }
+            }
+          }
+        } catch (destroyError) {
+          console.error('Error destroying old recorder:', destroyError);
+        }
+      }
+      
+      // 3. 메모리 정리를 위한 약간의 대기
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
+    } catch (error) {
+      console.error('Old recorder cleanup failed:', error);
+    }
+    
+    console.log('Old recorder cleanup completed');
+  };
+
+  // Recorder 정리 함수 - 현재 인스턴스용 (간소화)
+  const cleanupRecorder = () => {
+    console.log('Cleaning up current recorder...');
+    
+    // 현재 recorder 상태만 정리
+    const currentRecorder = recorder;
+    setRecorder(null);
     setRecordingTime(0);
     
-    // 녹화 시간 카운터 중지
-    if (recordingIntervalRef.current) {
-      clearInterval(recordingIntervalRef.current);
-      recordingIntervalRef.current = null;
+    if (currentRecorder) {
+      // 비동기적으로 정리 (UI 블로킹 방지)
+      setTimeout(() => cleanupOldRecorder(currentRecorder), 0);
     }
+    
+    console.log('Current recorder state cleared');
   };
 
   const toggleRecording = () => {
@@ -545,17 +1373,96 @@ const PDFFeedbackBoard: React.FC = () => {
     }
   };
 
+  // 파일 다운로드 함수
+  const downloadFile = (file: {name: string, blob: Blob}) => {
+    const url = URL.createObjectURL(file.blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = file.name;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  // 파일 삭제 함수
+  const deleteFile = (index: number) => {
+    setRecordedFiles(prev => prev.filter((_, i) => i !== index));
+  };
+
   // 컴포넌트 언마운트 시 정리
   useEffect(() => {
     return () => {
+      console.log('Component unmounting...');
+      
+      // 타이머 정리
       if (recordingIntervalRef.current) {
         clearInterval(recordingIntervalRef.current);
+        recordingIntervalRef.current = null;
       }
+      
+      if (streamingIntervalRef.current) {
+        clearInterval(streamingIntervalRef.current);
+        streamingIntervalRef.current = null;
+      }
+      
+      // recorder가 있으면 정리
       if (recorder) {
-        recorder.stopRecording(() => {});
+        console.log('Component unmounting, cleaning up recorder...');
+        try {
+          // 녹화 중이면 중지 시도 (하지만 콜백은 기다리지 않음)
+          if (isRecording) {
+            try {
+              recorder.stopRecording(() => {
+                console.log('Recording stopped during cleanup');
+              });
+            } catch (stopError) {
+              console.error('Error stopping recording during cleanup:', stopError);
+            }
+          }
+          
+          // 정리 함수 호출
+          cleanupRecorder();
+        } catch (error) {
+          console.error('Cleanup during unmount failed:', error);
+          // 강제로 상태만 초기화
+          setRecorder(null);
+          setRecordingTime(0);
+        }
       }
+      
+      // 스트리밍이 있으면 정리
+      if (localStreamRef.current) {
+        console.log('Component unmounting, stopping streaming...');
+        localStreamRef.current.getTracks().forEach(track => {
+          try {
+            track.stop();
+          } catch (error) {
+            console.error('Error stopping stream track:', error);
+          }
+        });
+        localStreamRef.current = null;
+        setLocalStream(null);
+        setIsStreaming(false);
+      }
+      
+      // Socket 연결 정리
+      if (socketRef.current) {
+        socketRef.current.disconnect();
+        socketRef.current = null;
+      }
+      
+      // Peer connection 정리
+      if (peerConnectionRef.current) {
+        peerConnectionRef.current.close();
+        peerConnectionRef.current = null;
+      }
+      
+      // 스트림 준비 상태와 대기 큐 초기화
+      isStreamReadyRef.current = false;
+      pendingViewersRef.current = [];
     };
-  }, [recorder]);
+  }, []); // 의존성 배열을 비워서 컴포넌트 마운트 시에만 등록
 
   return (
     <div className="flex flex-col h-[90vh] bg-white rounded-lg shadow-lg">
@@ -675,24 +1582,232 @@ const PDFFeedbackBoard: React.FC = () => {
           )}
         </div>
 
-        <button
-          onClick={toggleRecording}
-          disabled={!pdfLoaded}
-          className={`flex items-center space-x-2 px-4 py-2 rounded-lg ${
-            isRecording
-              ? 'bg-red-600 text-white hover:bg-red-700'
-              : 'bg-green-600 text-white hover:bg-green-700'
-          } disabled:bg-gray-400 disabled:cursor-not-allowed`}
-        >
-          {isRecording ? <Square size={16} /> : <Play size={16} />}
-          <span>{isRecording ? '녹화 중지' : '녹화 시작'}</span>
-          {isRecording && (
-            <span className="bg-red-800 px-2 py-1 rounded text-sm">
-              {Math.floor(recordingTime / 60)}:{(recordingTime % 60).toString().padStart(2, '0')}
-            </span>
+        <div className="flex items-center space-x-2">
+          <button
+            onClick={toggleRecording}
+            disabled={!pdfLoaded}
+            className={`flex items-center space-x-2 px-4 py-2 rounded-lg ${
+              isRecording
+                ? 'bg-red-600 text-white hover:bg-red-700'
+                : 'bg-green-600 text-white hover:bg-green-700'
+            } disabled:bg-gray-400 disabled:cursor-not-allowed`}
+          >
+            {isRecording ? <Square size={16} /> : <Play size={16} />}
+            <span>{isRecording ? '녹화 중지' : '녹화 시작'}</span>
+            {isRecording && (
+              <span className="bg-red-800 px-2 py-1 rounded text-sm">
+                {Math.floor(recordingTime / 60)}:{(recordingTime % 60).toString().padStart(2, '0')}
+              </span>
+            )}
+          </button>
+
+          {/* 실시간 스트리밍 버튼 */}
+          <button
+            onClick={toggleStreaming}
+            disabled={!pdfLoaded}
+            className={`flex items-center space-x-2 px-4 py-2 rounded-lg ${
+              isStreaming
+                ? 'bg-purple-600 text-white hover:bg-purple-700'
+                : 'bg-blue-600 text-white hover:bg-blue-700'
+            } disabled:bg-gray-400 disabled:cursor-not-allowed`}
+          >
+            {isStreaming ? <Square size={16} /> : <Share size={16} />}
+            <span>{isStreaming ? '스트리밍 중지' : '실시간 공유'}</span>
+            {isStreaming && (
+              <span className="bg-purple-800 px-2 py-1 rounded text-sm">
+                {Math.floor(streamingTime / 60)}:{(streamingTime % 60).toString().padStart(2, '0')}
+              </span>
+            )}
+          </button>
+
+          {/* 스트리밍 URL 공유 버튼 */}
+          {isStreaming && streamingUrl && (
+            <button
+              onClick={() => setShowStreamingModal(true)}
+              className="flex items-center space-x-2 px-3 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
+            >
+              <Users size={16} />
+              <span>공유 링크</span>
+            </button>
           )}
-        </button>
+
+          {/* 녹화된 파일 목록 버튼 */}
+          {recordedFiles.length > 0 && (
+            <button
+              onClick={() => setShowFileList(!showFileList)}
+              className="flex items-center space-x-2 px-3 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
+            >
+              <span>파일 ({recordedFiles.length})</span>
+            </button>
+          )}
+        </div>
       </div>
+      
+      {/* 스트리밍 URL 공유 모달 */}
+      {showStreamingModal && streamingUrl && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl p-6 max-w-lg w-full mx-4">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold flex items-center space-x-2">
+                <Share className="text-purple-600" size={20} />
+                <span>실시간 스트리밍 공유</span>
+              </h3>
+              <button
+                onClick={() => setShowStreamingModal(false)}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                ✕
+              </button>
+            </div>
+            
+            <div className="space-y-4">
+              {/* 연결 상태 */}
+              <div className="flex items-center space-x-2">
+                <div className={`w-3 h-3 rounded-full ${
+                  connectionStatus === 'connected' ? 'bg-green-500' : 
+                  connectionStatus === 'connecting' ? 'bg-yellow-500' : 
+                  connectionStatus === 'failed' ? 'bg-red-500' : 'bg-gray-400'
+                }`}></div>
+                <span className="text-sm text-gray-600">
+                  상태: {
+                    connectionStatus === 'connected' ? '연결됨' :
+                    connectionStatus === 'connecting' ? '연결 중...' :
+                    connectionStatus === 'failed' ? '연결 실패' : '연결되지 않음'
+                  }
+                </span>
+              </div>
+
+              {/* 스트리밍 시간 */}
+              <div className="text-sm text-gray-600">
+                스트리밍 시간: {Math.floor(streamingTime / 60)}:{(streamingTime % 60).toString().padStart(2, '0')}
+                <span className="ml-4">뷰어: {viewerCount}명</span>
+              </div>
+
+              {/* URL 공유 섹션 */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  공유 링크 (다른 사용자가 이 링크로 실시간 화면을 볼 수 있습니다)
+                </label>
+                <div className="flex space-x-2">
+                  <input
+                    type="text"
+                    value={streamingUrl}
+                    readOnly
+                    className="flex-1 px-3 py-2 border border-gray-300 rounded text-sm bg-gray-50"
+                  />
+                  <button
+                    onClick={copyStreamingUrl}
+                    className="px-3 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 flex items-center space-x-1"
+                  >
+                    <Copy size={14} />
+                    <span>복사</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* 안내 메시지 */}
+              <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
+                <h4 className="font-medium text-purple-800 mb-2">📡 실시간 스트리밍 안내</h4>
+                <div className="text-sm text-purple-700 space-y-1">
+                  <p>• 다른 사용자가 위 링크를 통해 실시간으로 화면을 볼 수 있습니다</p>
+                  <p>• 화면 공유와 마이크 음성이 모두 전달됩니다</p>
+                  <p>• 스트리밍을 중지하면 링크가 비활성화됩니다</p>
+                  <p>• WebRTC 기반으로 지연 시간이 매우 낮습니다</p>
+                </div>
+              </div>
+
+              {/* 기술적 정보 */}
+              <div className="bg-gray-50 rounded-lg p-3">
+                <h4 className="font-medium text-gray-800 mb-2">🔧 기술 정보</h4>
+                <div className="text-xs text-gray-600 space-y-1">
+                  <p>• 프로토콜: WebRTC (P2P 연결)</p>
+                  <p>• 화질: 최대 1920x1080 @ 30fps</p>
+                  <p>• 오디오: 화면 오디오 + 마이크 (44.1kHz, 스테레오)</p>
+                  <p>• 지연시간: 약 100-500ms</p>
+                </div>
+              </div>
+
+              {/* 액션 버튼들 */}
+              <div className="flex space-x-2 pt-2">
+                <button
+                  onClick={() => window.open(streamingUrl, '_blank')}
+                  className="flex-1 px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 flex items-center justify-center space-x-2"
+                >
+                  <ExternalLink size={16} />
+                  <span>새 창에서 보기</span>
+                </button>
+                <button
+                  onClick={stopStreaming}
+                  className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
+                >
+                  스트리밍 중지
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 녹화된 파일 목록 모달 */}
+      {showFileList && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl p-6 max-w-2xl w-full mx-4 max-h-[80vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold">녹화된 파일 목록</h3>
+              <button
+                onClick={() => setShowFileList(false)}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                ✕
+              </button>
+            </div>
+            
+            {recordedFiles.length === 0 ? (
+              <p className="text-gray-500 text-center py-8">녹화된 파일이 없습니다.</p>
+            ) : (
+              <div className="space-y-3">
+                {recordedFiles.map((file, index) => (
+                  <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                    <div className="flex-1">
+                      <div className="font-medium text-sm">{file.name}</div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        {file.timestamp.toLocaleString('ko-KR')}
+                        <span className="ml-2">
+                          크기: {(file.blob.size / 1024 / 1024).toFixed(1)} MB
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <button
+                        onClick={() => downloadFile(file)}
+                        className="px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700"
+                      >
+                        다운로드
+                      </button>
+                      <button
+                        onClick={() => deleteFile(index)}
+                        className="px-3 py-1 bg-red-600 text-white text-sm rounded hover:bg-red-700"
+                      >
+                        삭제
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            
+            <div className="mt-6 p-4 bg-blue-50 rounded-lg">
+              <h4 className="font-medium text-blue-800 mb-2">💡 파일 위치 안내</h4>
+              <div className="text-sm text-blue-700 space-y-1">
+                <p>• 녹화 완료 시 자동으로 다운로드 폴더에 저장됩니다</p>
+                <p>• 기본 위치: <code className="bg-blue-100 px-1 rounded">C:\Users\[사용자명]\Downloads\</code></p>
+                <p>• 파일명 형식: <code className="bg-blue-100 px-1 rounded">pdf-feedback-YYYY-MM-DD-HH-mm-ss.webm</code></p>
+                <p>• 브라우저 설정에서 다운로드 폴더를 변경할 수 있습니다</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 메인 콘텐츠 영역 */}
       <div className="flex-1 flex flex-col">
@@ -774,7 +1889,7 @@ const PDFFeedbackBoard: React.FC = () => {
                             setTextPosition(null);
                           }
                         }}
-                        className="px-2 py-1 border border-gray-300 rounded text-sm"
+                        className="px-2 py-1 border border-gray-300 rounded text-sm text-black"
                         placeholder="텍스트 입력..."
                         autoFocus
                       />
@@ -910,10 +2025,19 @@ const PDFFeedbackBoard: React.FC = () => {
                 </div>
               )}
               
+              {/* 스트리밍 상태 표시 */}
+              {isStreaming && (
+                <div className="flex items-center space-x-2 px-3 py-2 bg-purple-100 text-purple-600 rounded-lg text-sm">
+                  <div className="w-2 h-2 bg-purple-500 rounded-full animate-pulse"></div>
+                  <span>실시간 공유 중 ({Math.floor(streamingTime / 60)}:{(streamingTime % 60).toString().padStart(2, '0')})</span>
+                </div>
+              )}
+              
               {/* 녹화된 파일이 있을 때 안내 */}
-              {recordedBlob && !isRecording && (
-                <div className="flex items-center space-x-2 px-3 py-2 bg-green-100 text-green-600 rounded-lg text-sm">
-                  <span>✓ 녹화 완료 - 파일이 다운로드되었습니다</span>
+              {recordedBlob && !isRecording && !isStreaming && (
+                <div className="flex items-center space-x-2 px-3 py-2 bg-green-100 text-green-600 rounded-lg text-sm cursor-pointer"
+                     onClick={() => setShowFileList(true)}>
+                  <span>✓ 녹화 완료 - 다운로드 폴더에 저장됨 (클릭하여 파일 목록 보기)</span>
                 </div>
               )}
             </div>
