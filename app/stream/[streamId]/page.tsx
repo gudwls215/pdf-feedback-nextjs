@@ -10,18 +10,23 @@ const StreamViewer: React.FC = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const socketRef = useRef<any>(null);
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
-  
+
   const [isConnected, setIsConnected] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [isMuted, setIsMuted] = useState(false);
+  const [isMuted, setIsMuted] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [connectionTime, setConnectionTime] = useState(0);
   const [viewerCount, setViewerCount] = useState(1);
-  const [streamInfo, setStreamInfo] = useState<{width: number, height: number, hasVideo: boolean, hasAudio: boolean} | null>(null);
-  
+  const [streamInfo, setStreamInfo] = useState<{ width: number, height: number, hasVideo: boolean, hasAudio: boolean } | null>(null);
+  const [chatMessages, setChatMessages] = useState<{ id: string, sender: string, message: string, timestamp: Date, isStreamer: boolean }[]>([]);
+  const [chatInput, setChatInput] = useState('');
+  const [showChat, setShowChat] = useState(false);
+  const [viewerName, setViewerName] = useState('');
+
   const connectionTimeRef = useRef<NodeJS.Timeout | null>(null);
-  
+  const chatEndRef = useRef<HTMLDivElement>(null);
+
   // WebRTC 설정
   const rtcConfiguration = {
     iceServers: [
@@ -48,65 +53,99 @@ const StreamViewer: React.FC = () => {
     };
   }, [isConnected]);
 
+  // 뷰어 이름 설정
+  useEffect(() => {
+    const savedName = localStorage.getItem('viewerName');
+    if (savedName) {
+      setViewerName(savedName);
+    } else {
+      const randomName = `뷰어${Math.floor(Math.random() * 1000)}`;
+      setViewerName(randomName);
+      localStorage.setItem('viewerName', randomName);
+    }
+  }, []);
+
+
   useEffect(() => {
     const connectToSignalingServer = async () => {
       try {
         setIsLoading(true);
         setError(null);
-        
+
         // 스트림 ID 유효성 검사
         if (!streamId || streamId.length < 10) {
           throw new Error('유효하지 않은 스트림 ID입니다.');
         }
-        
+
         console.log('시그널링 서버에 연결 중...', streamId);
-        
+
         // Socket.IO 동적 임포트
         const io = await import('socket.io-client');
         const socket = io.default('http://192.168.0.152:3001', {
           transports: ['websocket', 'polling']
         });
-        
+
         socketRef.current = socket;
-        
+
         socket.on('connect', () => {
           console.log('시그널링 서버에 연결되었습니다');
           // 스트림에 참여
           socket.emit('join-stream', { streamId });
         });
-        
+
         socket.on('stream-available', async (data) => {
           console.log('스트림 사용 가능:', data);
           await setupPeerConnection(data.hostSocketId);
         });
-        
+
         socket.on('stream-not-found', () => {
           setError('스트림을 찾을 수 없습니다. 스트리머가 아직 시작하지 않았거나 이미 종료되었을 수 있습니다.');
           setIsLoading(false);
         });
-        
+
         socket.on('offer', async (data) => {
           console.log('Offer 수신:', data);
           await handleOffer(data);
         });
-        
+
         socket.on('answer', async (data) => {
           console.log('Answer 수신:', data);
           await handleAnswer(data);
         });
-        
+
         socket.on('ice-candidate', async (data) => {
           console.log('ICE candidate 수신:', data);
           await handleIceCandidate(data);
         });
-        
+
         socket.on('stream-ended', () => {
           console.log('스트림이 종료되었습니다');
           setError('스트림이 종료되었습니다.');
           setIsConnected(false);
           setIsLoading(false);
         });
-        
+
+        socket.on('chat-message', (data) => {
+          console.log('채팅 메시지 수신:', data);
+          const newMessage = {
+            id: Date.now().toString() + Math.random().toString(36).substr(2),
+            sender: data.senderName || '스트리머',
+            message: data.message,
+            timestamp: new Date(),
+            isStreamer: data.isStreamer || false
+          };
+          setChatMessages(prev => [...prev, newMessage]);
+
+          // 채팅창이 열려있으면 맨 아래로 스크롤
+          if (showChat) {
+            setTimeout(() => {
+              if (chatEndRef.current) {
+                chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
+              }
+            }, 100);
+          }
+        });
+
         socket.on('disconnect', () => {
           console.log('시그널링 서버 연결 해제');
           if (!error) {
@@ -114,59 +153,52 @@ const StreamViewer: React.FC = () => {
           }
           setIsConnected(false);
         });
-        
+
       } catch (err) {
         console.error('시그널링 서버 연결 실패:', err);
         setError(err instanceof Error ? err.message : '스트림 연결에 실패했습니다.');
         setIsLoading(false);
       }
     };
-    
+
     const setupPeerConnection = async (hostSocketId: string) => {
       try {
         console.log('뷰어: Peer connection 설정 중...', hostSocketId);
-        
+
         const peerConnection = new RTCPeerConnection(rtcConfiguration);
         peerConnectionRef.current = peerConnection;
-        
+
         // 원격 스트림 수신
         peerConnection.ontrack = (event) => {
-          console.log('뷰어: 원격 스트림 수신:', event);
-          if (videoRef.current && event.streams[0]) {
-            console.log('뷰어: 비디오 엘리먼트에 스트림 설정');
+          console.log('뷰어: 원격 스트림 수신 (ontrack 이벤트 발생):', event);
+
+          // streams[0]이 있고 videoRef가 있으면 스트림 할당
+          if (event.streams && event.streams[0]) {
             const stream = event.streams[0];
-            console.log('뷰어: 스트림 트랙 정보:', stream.getTracks().map(t => `${t.kind}: ${t.id}`));
-            videoRef.current.srcObject = stream;
-            
-            // 스트림이 설정된 후 재생 시도
-            videoRef.current.play().catch(error => {
-              console.log('비디오 자동 재생 실패, 사용자 상호작용 필요:', error);
-            });
-            
-            // 스트림 정보 업데이트
-            const videoTracks = stream.getVideoTracks();
-            const audioTracks = stream.getAudioTracks();
-            setStreamInfo({
-              width: videoRef.current.videoWidth,
-              height: videoRef.current.videoHeight,
-              hasVideo: videoTracks.length > 0,
-              hasAudio: audioTracks.length > 0
-            });
-            
-            // 비디오 트랙 상태 확인
-            if (videoTracks.length > 0) {
-              console.log('뷰어: 비디오 트랙 상태:', {
-                enabled: videoTracks[0].enabled,
-                readyState: videoTracks[0].readyState,
-                settings: videoTracks[0].getSettings?.()
+            if (videoRef.current) {
+              videoRef.current.srcObject = stream;
+              videoRef.current.play().catch(() => { });
+              setStreamInfo({
+                width: videoRef.current.videoWidth,
+                height: videoRef.current.videoHeight,
+                hasVideo: stream.getVideoTracks().length > 0,
+                hasAudio: stream.getAudioTracks().length > 0
               });
+            } else {
+              // videoRef가 아직 마운트되지 않은 경우, 100ms 후 재시도
+              setTimeout(() => {
+                if (videoRef.current) {
+                  videoRef.current.srcObject = stream;
+                  videoRef.current.play().catch(() => { });
+                }
+              }, 100);
             }
-            
-            setIsConnected(true);
-            setIsLoading(false);
+          } else {
+            console.warn('뷰어: ontrack 이벤트가 발생했으나, 스트림이 없습니다.', event);
           }
+
         };
-        
+
         // ICE candidate 이벤트
         peerConnection.onicecandidate = (event) => {
           if (event.candidate && socketRef.current) {
@@ -178,60 +210,82 @@ const StreamViewer: React.FC = () => {
             });
           }
         };
-        
+
         // 연결 상태 변경
         peerConnection.onconnectionstatechange = () => {
-          console.log('뷰어: Connection state:', peerConnection.connectionState);
-          if (peerConnection.connectionState === 'connected') {
-            console.log('뷰어: WebRTC 연결 성공!');
-            setIsConnected(true);
-            setIsLoading(false);
-            
-            // 연결 후 비디오 상태 확인
-            if (videoRef.current) {
-              console.log('뷰어: 비디오 엘리먼트 상태:', {
-                srcObject: !!videoRef.current.srcObject,
-                videoWidth: videoRef.current.videoWidth,
-                videoHeight: videoRef.current.videoHeight,
-                readyState: videoRef.current.readyState,
-                paused: videoRef.current.paused
-              });
-            }
-          } else if (peerConnection.connectionState === 'failed' || 
-                    peerConnection.connectionState === 'disconnected') {
-            console.log('뷰어: WebRTC 연결 실패/해제');
-            setError('WebRTC 연결에 실패했습니다.');
-            setIsConnected(false);
+          const connectionState = peerConnection.connectionState;
+          console.log('뷰어: Connection state 변경:', connectionState);
+
+          switch (connectionState) {
+            case 'connecting':
+              setIsLoading(true);
+              break;
+            case 'connected':
+              console.log('뷰어: WebRTC 연결 성공!');
+              setIsConnected(true);
+              setIsLoading(false);
+              setError(null);
+
+              // 연결 후 비디오 상태 확인 (약간의 지연 후)
+              setTimeout(() => {
+                if (videoRef.current) {
+                  console.log('뷰어: 비디오 엘리먼트 상태 (연결 직후):', {
+                    srcObject: !!videoRef.current.srcObject,
+                    videoWidth: videoRef.current.videoWidth,
+                    videoHeight: videoRef.current.videoHeight,
+                    readyState: videoRef.current.readyState,
+                    paused: videoRef.current.paused,
+                    muted: videoRef.current.muted,
+                  });
+                  // videoWidth가 0이면 스트림은 연결되었지만 비디오 데이터가 오지 않는 상태
+                  if (videoRef.current.videoWidth === 0) {
+                    console.warn('경고: WebRTC는 연결되었으나 비디오 프레임이 수신되지 않고 있습니다. (검은 화면 원인)');
+                  }
+                }
+              }, 1000);
+              break;
+            case 'disconnected':
+            case 'closed':
+              console.log('뷰어: WebRTC 연결 해제');
+              if (!error) setError('WebRTC 연결이 해제되었습니다.');
+              setIsConnected(false);
+              break;
+            case 'failed':
+              console.error('뷰어: WebRTC 연결 실패');
+              setError('WebRTC 연결에 실패했습니다. 네트워크 상태를 확인하거나 다시 시도해주세요.');
+              setIsConnected(false);
+              setIsLoading(false);
+              break;
           }
         };
-        
+
         console.log('뷰어: Peer connection 설정 완료, offer 대기 중...');
-        
+
       } catch (error) {
         console.error('뷰어: Peer connection 설정 실패:', error);
         setError('WebRTC 연결 설정에 실패했습니다.');
         setIsLoading(false);
       }
     };
-    
+
     const handleOffer = async (data: any) => {
       console.log('뷰어: Offer 수신, 처리 중...', data);
       if (peerConnectionRef.current && socketRef.current) {
         try {
           console.log('뷰어: Remote description 설정 중...');
           await peerConnectionRef.current.setRemoteDescription(data.offer);
-          
+
           console.log('뷰어: Answer 생성 중...');
           const answer = await peerConnectionRef.current.createAnswer();
           await peerConnectionRef.current.setLocalDescription(answer);
-          
+
           console.log('뷰어: Answer 전송 중...', answer);
           socketRef.current.emit('answer', {
             answer,
             targetSocketId: data.fromSocketId,
             streamId
           });
-          
+
           console.log('뷰어: Answer 전송 완료');
         } catch (error) {
           console.error('뷰어: Offer 처리 실패:', error);
@@ -241,7 +295,7 @@ const StreamViewer: React.FC = () => {
         console.error('뷰어: PeerConnection 또는 Socket이 없습니다');
       }
     };
-    
+
     const handleAnswer = async (data: any) => {
       if (peerConnectionRef.current) {
         try {
@@ -252,7 +306,7 @@ const StreamViewer: React.FC = () => {
         }
       }
     };
-    
+
     const handleIceCandidate = async (data: any) => {
       console.log('뷰어: ICE candidate 수신:', data);
       if (peerConnectionRef.current) {
@@ -266,27 +320,27 @@ const StreamViewer: React.FC = () => {
         console.error('뷰어: PeerConnection이 없습니다');
       }
     };
-    
+
     connectToSignalingServer();
-    
+
     return () => {
       // 컴포넌트 언마운트 시 연결 정리
       if (socketRef.current) {
         socketRef.current.disconnect();
         socketRef.current = null;
       }
-      
+
       if (peerConnectionRef.current) {
         peerConnectionRef.current.close();
         peerConnectionRef.current = null;
       }
-      
+
       setIsConnected(false);
       if (connectionTimeRef.current) {
         clearInterval(connectionTimeRef.current);
       }
     };
-  }, [streamId]);
+  }, [streamId, showChat]);
 
   const toggleMute = () => {
     if (videoRef.current) {
@@ -321,6 +375,60 @@ const StreamViewer: React.FC = () => {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
+  // 채팅 메시지 전송
+  const sendChatMessage = () => {
+    if (!chatInput.trim() || !socketRef.current) return;
+
+    const message = {
+      id: Date.now().toString() + Math.random().toString(36).substr(2),
+      sender: viewerName,
+      message: chatInput,
+      timestamp: new Date(),
+      isStreamer: false
+    };
+
+    // 로컬에 메시지 추가
+    setChatMessages(prev => [...prev, message]);
+
+    // 소켓을 통해 스트리머에게 전송
+    socketRef.current.emit('chat-message', {
+      streamId,
+      senderName: viewerName,
+      message: chatInput,
+      isStreamer: false
+    });
+
+    setChatInput('');
+
+    // 채팅창 맨 아래로 스크롤
+    setTimeout(() => {
+      if (chatEndRef.current) {
+        chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
+      }
+    }, 100);
+  };
+
+  // Enter 키로 메시지 전송
+  const handleChatKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendChatMessage();
+    }
+  };
+
+  // 채팅창 열기/닫기
+  const toggleChat = () => {
+    setShowChat(prev => !prev);
+    if (!showChat) {
+      // 채팅창을 열면 맨 아래로 스크롤
+      setTimeout(() => {
+        if (chatEndRef.current) {
+          chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
+        }
+      }, 100);
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-gray-900 flex items-center justify-center">
@@ -349,8 +457,8 @@ const StreamViewer: React.FC = () => {
               <li>• 호스트가 스트리밍을 중지했습니다</li>
             </ul>
           </div>
-          <button 
-            onClick={() => window.location.reload()} 
+          <button
+            onClick={() => window.location.reload()}
             className="mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
           >
             다시 시도
@@ -372,7 +480,7 @@ const StreamViewer: React.FC = () => {
               <span className="text-sm">LIVE</span>
             </div>
           </div>
-          
+
           <div className="flex items-center space-x-4 text-gray-300">
             <div className="flex items-center space-x-1">
               <Users size={16} />
@@ -404,35 +512,46 @@ const StreamViewer: React.FC = () => {
               playsInline
               muted={isMuted}
               controls={false}
-              onLoadStart={() => console.log('비디오 로드 시작')}
-              onLoadedData={() => console.log('비디오 데이터 로드됨')}
-              onCanPlay={() => console.log('비디오 재생 가능')}
-              onPlay={() => console.log('비디오 재생 시작')}
+              onLoadStart={() => console.log('비디오 로드 시작 (onLoadStart)')}
+              onLoadedData={() => console.log('비디오 데이터 로드됨 (onLoadedData)')}
+              onCanPlay={() => console.log('비디오 재생 가능 (onCanPlay)')}
+              onPlay={() => console.log('비디오 재생 시작 (onPlay)')}
+              onPlaying={() => console.log('비디오 재생 중 (onPlaying)')}
               onError={(e) => console.error('비디오 에러:', e)}
             />
-            
+
             {/* 비디오 컨트롤 오버레이 */}
-            <div className="absolute bottom-4 left-4 right-4 bg-black bg-opacity-50 rounded-lg px-4 py-2 flex items-center justify-between">
+            <div className="absolute bottom-4 left-4 right-4 bg-black bg-opacity-50 rounded-lg px-4 py-2 flex items-center justify-between opacity-80 hover:opacity-100 transition-opacity">
               <div className="flex items-center space-x-2 text-white">
                 <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
                 <span className="text-sm">실시간 중계</span>
               </div>
-              
+
               <div className="flex items-center space-x-2">
                 <button
                   onClick={toggleMute}
-                  className="p-2 text-white hover:bg-white hover:bg-opacity-20 rounded"
+                  className="p-2 text-white hover:bg-white hover:bg-opacity-20 rounded-full"
                   title={isMuted ? '음소거 해제' : '음소거'}
                 >
                   {isMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
                 </button>
-                
+
                 <button
                   onClick={toggleFullscreen}
-                  className="p-2 text-white hover:bg-white hover:bg-opacity-20 rounded"
+                  className="p-2 text-white hover:bg-white hover:bg-opacity-20 rounded-full"
                   title={isFullscreen ? '전체화면 해제' : '전체화면'}
                 >
                   {isFullscreen ? <Minimize size={20} /> : <Maximize size={20} />}
+                </button>
+
+                <button
+                  onClick={toggleChat}
+                  className="p-2 text-white hover:bg-white hover:bg-opacity-20 rounded-full"
+                  title="채팅"
+                >
+                  <svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                  </svg>
                 </button>
               </div>
             </div>
@@ -440,8 +559,8 @@ const StreamViewer: React.FC = () => {
         ) : (
           <div className="w-full h-[calc(100vh-64px)] bg-gray-800 flex items-center justify-center">
             <div className="text-center text-gray-400">
-              <div className="text-4xl mb-4">📱</div>
-              <p className="mb-2">스트림이 아직 시작되지 않았습니다</p>
+              <div className="text-4xl mb-4">📺</div>
+              <p className="mb-2">스트림을 기다리는 중...</p>
               {streamInfo && (
                 <div className="text-sm text-gray-500 mt-2">
                   연결됨 - 비디오: {streamInfo.hasVideo ? '있음' : '없음'}, 오디오: {streamInfo.hasAudio ? '있음' : '없음'}
@@ -451,6 +570,86 @@ const StreamViewer: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* 채팅 모달 */}
+      {showChat && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md h-[600px] mx-4 flex flex-col">
+            <div className="flex items-center justify-between p-4 border-b">
+              <h3 className="text-lg font-semibold flex items-center space-x-2">
+                <svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                </svg>
+                <span>채팅</span>
+                <span className="text-sm text-gray-500">({viewerName})</span>
+              </h3>
+              <button
+                onClick={toggleChat}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* 채팅 메시지 영역 */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+              {chatMessages.length === 0 ? (
+                <div className="text-center text-gray-500 mt-10">
+                  <svg className="mx-auto mb-4" width={48} height={48} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                  </svg>
+                  <p>아직 채팅 메시지가 없습니다.</p>
+                  <p className="text-sm">스트리머와 실시간으로 소통해보세요!</p>
+                </div>
+              ) : (
+                <>
+                  {chatMessages.map((msg) => (
+                    <div key={msg.id} className={`flex ${msg.isStreamer ? 'justify-start' : 'justify-end'}`}>
+                      <div className={`max-w-[75%] ${msg.isStreamer
+                          ? 'bg-gray-200 text-gray-800 rounded-r-lg rounded-tl-lg'
+                          : 'bg-blue-500 text-white rounded-l-lg rounded-tr-lg'
+                        } px-3 py-2`}>
+                        <div className="text-xs opacity-75 mb-1">
+                          {msg.sender} • {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </div>
+                        <div className="text-sm whitespace-pre-wrap break-words">
+                          {msg.message}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  <div ref={chatEndRef} />
+                </>
+              )}
+            </div>
+
+            {/* 메시지 입력 영역 */}
+            <div className="p-4 border-t">
+              <div className="flex space-x-2">
+                <input
+                  type="text"
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  onKeyPress={handleChatKeyPress}
+                  placeholder="메시지를 입력하세요..."
+                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  maxLength={500}
+                />
+                <button
+                  onClick={sendChatMessage}
+                  disabled={!chatInput.trim()}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+                >
+                  전송
+                </button>
+              </div>
+              <div className="text-xs text-gray-500 mt-1">
+                {chatInput.length}/500
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

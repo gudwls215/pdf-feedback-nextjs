@@ -19,6 +19,7 @@ type RecorderType = {
 };
 
 const PDFFeedbackBoard: React.FC = () => {
+  const [showToast, setShowToast] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [pdfLoaded, setPdfLoaded] = useState(false);
   const [pdfDocument, setPdfDocument] = useState<PDFDocumentProxy | null>(null);
@@ -43,10 +44,15 @@ const PDFFeedbackBoard: React.FC = () => {
   const [streamingUrl, setStreamingUrl] = useState('');
   const [connectionStatus, setConnectionStatus] = useState<'disconnected' | 'connecting' | 'connected' | 'failed'>('disconnected');
   const [viewerCount, setViewerCount] = useState(0);
+  const [chatMessages, setChatMessages] = useState<{id: string, sender: string, message: string, timestamp: Date, isStreamer: boolean}[]>([]);
+  const [chatInput, setChatInput] = useState('');
+  const [showChat, setShowChat] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
   const streamingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const socketRef = useRef<any>(null);
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
   const streamIdRef = useRef<string>('');
+  const chatEndRef = useRef<HTMLDivElement>(null);
   
   // 뷰어 연결 대기 큐
   const pendingViewersRef = useRef<string[]>([]);
@@ -75,7 +81,7 @@ const PDFFeedbackBoard: React.FC = () => {
   // 드래그 관련 상태
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
-  const [canvasPosition, setCanvasPosition] = useState({ x: 0, y: 0 });
+  const [canvasPosition, setCanvasPosition] = useState({ x: 210, y: 0 });
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -556,10 +562,6 @@ const PDFFeedbackBoard: React.FC = () => {
         if (isStreamReadyRef.current && localStreamRef.current) {
           console.log('스트림 준비됨, 즉시 뷰어 연결 처리:', data.viewerId);
           setupPeerConnectionForStreamer(data.viewerId);
-        } else if (isStreamReadyRef.current && localStream) {
-          // localStreamRef가 null이지만 state에는 스트림이 있을 때 setupPeerConnection 호출
-          console.log('스트림 준비됨 (state 기반), setupPeerConnection 호출:', data.viewerId);
-          setupPeerConnection(data.viewerId);
         } else {
           console.log('스트림이 아직 준비되지 않음, 뷰어를 대기 큐에 추가:', data.viewerId);
           pendingViewersRef.current.push(data.viewerId);
@@ -569,6 +571,23 @@ const PDFFeedbackBoard: React.FC = () => {
       socket.on('viewer-left', (data) => {
         console.log('뷰어 나감:', data);
         setViewerCount(data.viewerCount);
+      });
+      
+      socket.on('chat-message', (data) => {
+        console.log('채팅 메시지 수신:', data);
+        const newMessage = {
+          id: Date.now().toString() + Math.random().toString(36).substr(2),
+          sender: data.senderName || '뷰어',
+          message: data.message,
+          timestamp: new Date(),
+          isStreamer: false
+        };
+        setChatMessages(prev => [...prev, newMessage]);
+        
+        // 채팅창이 닫혀있으면 읽지 않은 메시지 카운트 증가
+        if (!showChat) {
+          setUnreadCount(prev => prev + 1);
+        }
       });
       
       socket.on('offer', async (data) => {
@@ -962,7 +981,8 @@ const PDFFeedbackBoard: React.FC = () => {
     
     try {
       await navigator.clipboard.writeText(streamingUrl);
-      alert('스트리밍 URL이 클립보드에 복사되었습니다!');
+      setShowToast(true);
+      setTimeout(() => setShowToast(false), 2000);
     } catch (error) {
       console.error('URL 복사 실패:', error);
       // fallback - 수동으로 선택할 수 있도록
@@ -972,11 +992,67 @@ const PDFFeedbackBoard: React.FC = () => {
       textArea.select();
       try {
         document.execCommand('copy');
-        alert('스트리밍 URL이 클립보드에 복사되었습니다!');
+        setShowToast(true);
+        setTimeout(() => setShowToast(false), 2000);
       } catch (fallbackError) {
         alert(`URL을 수동으로 복사해주세요: ${streamingUrl}`);
       }
       document.body.removeChild(textArea);
+    }
+  };
+
+  // 채팅 메시지 전송
+  const sendChatMessage = () => {
+    if (!chatInput.trim() || !socketRef.current) return;
+    
+    const message = {
+      id: Date.now().toString() + Math.random().toString(36).substr(2),
+      sender: '스트리머',
+      message: chatInput,
+      timestamp: new Date(),
+      isStreamer: true
+    };
+    
+    // 로컬에 메시지 추가
+    setChatMessages(prev => [...prev, message]);
+    
+    // 소켓을 통해 뷰어들에게 전송
+    socketRef.current.emit('chat-message', {
+      streamId: streamIdRef.current,
+      senderName: '스트리머',
+      message: chatInput,
+      isStreamer: true
+    });
+    
+    setChatInput('');
+    
+    // 채팅창 맨 아래로 스크롤
+    setTimeout(() => {
+      if (chatEndRef.current) {
+        chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
+      }
+    }, 100);
+  };
+
+  // 채팅창 열기/닫기
+  const toggleChat = () => {
+    setShowChat(prev => !prev);
+    if (!showChat) {
+      setUnreadCount(0); // 채팅창을 열면 읽지 않은 메시지 카운트 초기화
+      // 채팅창을 열면 맨 아래로 스크롤
+      setTimeout(() => {
+        if (chatEndRef.current) {
+          chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
+        }
+      }, 100);
+    }
+  };
+
+  // Enter 키로 메시지 전송
+  const handleChatKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendChatMessage();
     }
   };
 
@@ -1465,7 +1541,12 @@ const PDFFeedbackBoard: React.FC = () => {
   }, []); // 의존성 배열을 비워서 컴포넌트 마운트 시에만 등록
 
   return (
-    <div className="flex flex-col h-[90vh] bg-white rounded-lg shadow-lg">
+    <div className="flex flex-col w-full h-[100vh] min-h-0 max-h-[90vh] bg-white rounded-lg shadow-lg">
+      {showToast && (
+        <div className="fixed top-6 left-1/2 transform -translate-x-1/2 z-[9999] bg-blue-600 text-white px-6 py-3 rounded-lg shadow-lg animate-fade-in-out">
+          스트리밍 URL이 클립보드에 복사되었습니다!
+        </div>
+      )}
       {/* 상단 툴바 */}
       <div className="flex items-center justify-between p-4 border-b">
         <div className="flex items-center space-x-4">
@@ -1594,11 +1675,11 @@ const PDFFeedbackBoard: React.FC = () => {
           >
             {isRecording ? <Square size={16} /> : <Play size={16} />}
             <span>{isRecording ? '녹화 중지' : '녹화 시작'}</span>
-            {isRecording && (
+            {/* {isRecording && (
               <span className="bg-red-800 px-2 py-1 rounded text-sm">
                 {Math.floor(recordingTime / 60)}:{(recordingTime % 60).toString().padStart(2, '0')}
               </span>
-            )}
+            )} */}
           </button>
 
           {/* 실시간 스트리밍 버튼 */}
@@ -1613,22 +1694,40 @@ const PDFFeedbackBoard: React.FC = () => {
           >
             {isStreaming ? <Square size={16} /> : <Share size={16} />}
             <span>{isStreaming ? '스트리밍 중지' : '실시간 공유'}</span>
-            {isStreaming && (
+            {/* {isStreaming && (
               <span className="bg-purple-800 px-2 py-1 rounded text-sm">
                 {Math.floor(streamingTime / 60)}:{(streamingTime % 60).toString().padStart(2, '0')}
               </span>
-            )}
+            )} */}
           </button>
 
           {/* 스트리밍 URL 공유 버튼 */}
           {isStreaming && streamingUrl && (
-            <button
-              onClick={() => setShowStreamingModal(true)}
-              className="flex items-center space-x-2 px-3 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
-            >
-              <Users size={16} />
-              <span>공유 링크</span>
-            </button>
+            <>
+              <button
+                onClick={() => setShowStreamingModal(true)}
+                className="flex items-center space-x-2 px-3 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
+              >
+                <Users size={16} />
+                <span>공유 링크</span>
+              </button>
+
+              {/* 채팅 버튼 */}
+              <button
+                onClick={toggleChat}
+                className="relative flex items-center space-x-2 px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+              >
+                <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                </svg>
+                <span>채팅</span>
+                {unreadCount > 0 && (
+                  <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">
+                    {unreadCount > 9 ? '9+' : unreadCount}
+                  </span>
+                )}
+              </button>
+            </>
           )}
 
           {/* 녹화된 파일 목록 버튼 */}
@@ -1645,8 +1744,8 @@ const PDFFeedbackBoard: React.FC = () => {
       
       {/* 스트리밍 URL 공유 모달 */}
       {showStreamingModal && streamingUrl && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl p-6 max-w-lg w-full mx-4">
+        <div className="fixed inset-0 bg-white/60 backdrop-blur-sm flex items-center justify-center z-50 transition-all">
+          <div className="bg-white rounded-lg shadow-2xl p-6 max-w-lg w-full mx-4 border border-gray-200">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold flex items-center space-x-2">
                 <Share className="text-purple-600" size={20} />
@@ -1748,6 +1847,87 @@ const PDFFeedbackBoard: React.FC = () => {
         </div>
       )}
 
+      {/* 채팅 모달 */}
+      {showChat && isStreaming && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md h-[600px] mx-4 flex flex-col">
+            <div className="flex items-center justify-between p-4 border-b">
+              <h3 className="text-lg font-semibold flex items-center space-x-2">
+                <svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                </svg>
+                <span>실시간 채팅</span>
+                <span className="text-sm text-gray-500">({viewerCount}명 시청 중)</span>
+              </h3>
+              <button
+                onClick={toggleChat}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                ✕
+              </button>
+            </div>
+            
+            {/* 채팅 메시지 영역 */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+              {chatMessages.length === 0 ? (
+                <div className="text-center text-gray-500 mt-10">
+                  <svg className="mx-auto mb-4" width={48} height={48} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                  </svg>
+                  <p>아직 채팅 메시지가 없습니다.</p>
+                  <p className="text-sm">뷰어들과 실시간으로 소통해보세요!</p>
+                </div>
+              ) : (
+                <>
+                  {chatMessages.map((msg) => (
+                    <div key={msg.id} className={`flex ${msg.isStreamer ? 'justify-end' : 'justify-start'}`}>
+                      <div className={`max-w-[75%] ${
+                        msg.isStreamer 
+                          ? 'bg-blue-500 text-white rounded-l-lg rounded-tr-lg' 
+                          : 'bg-gray-200 text-gray-800 rounded-r-lg rounded-tl-lg'
+                      } px-3 py-2`}>
+                        <div className="text-xs opacity-75 mb-1">
+                          {msg.sender} • {msg.timestamp.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                        </div>
+                        <div className="text-sm whitespace-pre-wrap break-words">
+                          {msg.message}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  <div ref={chatEndRef} />
+                </>
+              )}
+            </div>
+            
+            {/* 메시지 입력 영역 */}
+            <div className="p-4 border-t">
+              <div className="flex space-x-2">
+                <input
+                  type="text"
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  onKeyPress={handleChatKeyPress}
+                  placeholder="메시지를 입력하세요..."
+                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  maxLength={500}
+                />
+                <button
+                  onClick={sendChatMessage}
+                  disabled={!chatInput.trim()}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+                >
+                  전송
+                </button>
+              </div>
+              <div className="text-xs text-gray-500 mt-1">
+                {chatInput.length}/500
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 녹화된 파일 목록 모달 */}
       {showFileList && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
@@ -1810,7 +1990,7 @@ const PDFFeedbackBoard: React.FC = () => {
       )}
 
       {/* 메인 콘텐츠 영역 */}
-      <div className="flex-1 flex flex-col">
+      <div className="flex-1 min-h-0 flex flex-col">
         {loading ? (
           <div className="flex-1 flex items-center justify-center">
             <div className="text-center">
@@ -2011,7 +2191,7 @@ const PDFFeedbackBoard: React.FC = () => {
 
               {/* 포지션 리셋 버튼 */}
               <button
-                onClick={() => setCanvasPosition({ x: 0, y: 0 })}
+                onClick={() => setCanvasPosition({ x: 210, y: 0 })}
                 className="px-3 py-2 bg-gray-50 text-gray-700 rounded-lg hover:bg-gray-100 text-sm"
               >
                 중앙으로
