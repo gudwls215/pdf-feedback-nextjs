@@ -1,5 +1,5 @@
 # 시그널링 서버용 Dockerfile
-FROM node:18-alpine
+FROM node:20.16.0-alpine
 
 WORKDIR /app
 
@@ -7,8 +7,8 @@ WORKDIR /app
 RUN apk add --no-cache libc6-compat
 
 # 의존성 파일 복사 및 설치
-COPY package.json ./
-RUN npm ci --only=production
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
 
 # 애플리케이션 코드 복사
 COPY server.js ./

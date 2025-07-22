@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # 시그널링 서버
   signaling-server:
@@ -40,5 +38,5 @@ networks:
   pdf-feedback-network:
     driver: bridge
 
-volumes:
+#volumes:
   # 필요시 볼륨 추가

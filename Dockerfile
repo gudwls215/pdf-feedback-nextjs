@@ -1,5 +1,5 @@
 # Stage 1: Dependencies
-FROM node:18-alpine AS deps
+FROM node:20.16.0-alpine AS deps
 WORKDIR /app
 
 # 패키지 매니저 설치
@@ -7,14 +7,17 @@ RUN apk add --no-cache libc6-compat
 
 # 의존성 설치
 COPY package.json package-lock.json* ./
-RUN npm ci --only=production
+RUN npm ci --omit=dev
 
 # Stage 2: Builder
-FROM node:18-alpine AS builder
+FROM node:20.16.0-alpine AS builder
 WORKDIR /app
 
-# 의존성 복사
-COPY --from=deps /app/node_modules ./node_modules
+# 빌드를 위해 모든 의존성 설치 (devDependencies 포함)
+COPY package.json package-lock.json* ./
+RUN npm ci
+
+# 소스 코드 복사
 COPY . .
 
 # 환경변수 설정
@@ -25,7 +28,7 @@ ENV NODE_ENV production
 RUN npm run build
 
 # Stage 3: Runner
-FROM node:18-alpine AS runner
+FROM node:20.16.0-alpine AS runner
 WORKDIR /app
 
 ENV NODE_ENV production
