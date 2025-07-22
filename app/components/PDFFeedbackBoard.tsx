@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Upload, Play, Square, ChevronLeft, ChevronRight, Pen, Type, Eraser, MousePointer, Minus, Plus, Share, Users, Copy, ExternalLink } from 'lucide-react';
+import { Upload, Play, Square, ChevronLeft, ChevronRight, Pen, Type, Eraser, MousePointer, Minus, Plus, Share, Users, Copy, ExternalLink, MessageCircle, X, Send } from 'lucide-react';
 
 // 타입 정의
 type PDFDocumentProxy = {
@@ -71,8 +71,8 @@ const PDFFeedbackBoard: React.FC = () => {
   const [isDrawing, setIsDrawing] = useState(false);
   const [brushSize, setBrushSize] = useState(3);
   const [brushColor, setBrushColor] = useState('#ff0000');
-  const [maskColor, setMaskColor] = useState('#ffff00'); // 마스킹 전용 색상
-  const [maskOpacity, setMaskOpacity] = useState(0.05); // 마스킹 투명도 - 매우 연하게
+  const [maskColor, setMaskColor] = useState('#cefa66ff'); // 마스킹 전용 색상
+  const [maskOpacity, setMaskOpacity] = useState(0.02); // 마스킹 투명도 - 형광펜처럼 일정하게
   const [textInput, setTextInput] = useState('');
   const [textPosition, setTextPosition] = useState<{ x: number; y: number } | null>(null);
   const [showTextInput, setShowTextInput] = useState(false);
@@ -355,6 +355,8 @@ const PDFFeedbackBoard: React.FC = () => {
     
     if (selectedTool === 'mask') {
       // 마스킹 도구: 경로 시작
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = maskOpacity; // 항상 일정한 투명도
       setMaskPath([{ x, y }]);
     } else {
       // 일반 펜 도구
@@ -411,25 +413,25 @@ const PDFFeedbackBoard: React.FC = () => {
     // 새 마스킹 경로 그리기
     ctx.save();
     ctx.globalCompositeOperation = 'source-over';
-    ctx.globalAlpha = maskOpacity; // 전체 투명도 설정
-    
+    ctx.globalAlpha = maskOpacity; // 항상 일정한 투명도
+
     // 마스킹 색상 설정
     const r = parseInt(maskColor.slice(1, 3), 16);
     const g = parseInt(maskColor.slice(3, 5), 16);
     const b = parseInt(maskColor.slice(5, 7), 16);
-    
-    ctx.strokeStyle = `rgb(${r}, ${g}, ${b})`; // 투명도는 globalAlpha로 처리
+
+    ctx.strokeStyle = `rgb(${r}, ${g}, ${b})`;
     ctx.lineWidth = brushSize * 4;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
-    
+
     ctx.beginPath();
     ctx.moveTo(path[0].x, path[0].y);
     for (let i = 1; i < path.length; i++) {
       ctx.lineTo(path[i].x, path[i].y);
     }
     ctx.stroke();
-    
+
     ctx.restore();
   };
 
@@ -446,24 +448,24 @@ const PDFFeedbackBoard: React.FC = () => {
     // 최종 마스킹 그리기
     ctx.save();
     ctx.globalCompositeOperation = 'source-over';
-    ctx.globalAlpha = maskOpacity; // 전체 투명도 설정
-    
+    ctx.globalAlpha = maskOpacity; // 항상 일정한 투명도
+
     const r = parseInt(maskColor.slice(1, 3), 16);
     const g = parseInt(maskColor.slice(3, 5), 16);
     const b = parseInt(maskColor.slice(5, 7), 16);
-    
-    ctx.strokeStyle = `rgb(${r}, ${g}, ${b})`; // 투명도는 globalAlpha로 처리
+
+    ctx.strokeStyle = `rgb(${r}, ${g}, ${b})`;
     ctx.lineWidth = brushSize * 4;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
-    
+
     ctx.beginPath();
     ctx.moveTo(maskPath[0].x, maskPath[0].y);
     for (let i = 1; i < maskPath.length; i++) {
       ctx.lineTo(maskPath[i].x, maskPath[i].y);
     }
     ctx.stroke();
-    
+
     ctx.restore();
     setMaskPath([]);
   };
@@ -546,11 +548,11 @@ const PDFFeedbackBoard: React.FC = () => {
       socketRef.current = socket;
       
       socket.on('connect', () => {
-        console.log('시그널링 서버에 연결되었습니다');
+        console.log('🔴 스트리머: 시그널링 서버에 연결되었습니다');
       });
       
       socket.on('stream-started', (data) => {
-        console.log('스트림 시작됨:', data);
+        console.log('🔴 스트리머: 스트림 시작됨:', data);
       });
       
       socket.on('viewer-joined', (data) => {
@@ -574,19 +576,42 @@ const PDFFeedbackBoard: React.FC = () => {
       });
       
       socket.on('chat-message', (data) => {
-        console.log('채팅 메시지 수신:', data);
+        console.log('🔴 스트리머: 채팅 메시지 수신:', {
+          senderName: data.senderName,
+          message: data.message,
+          isStreamer: data.isStreamer
+        });
+        
         const newMessage = {
           id: Date.now().toString() + Math.random().toString(36).substr(2),
           sender: data.senderName || '뷰어',
           message: data.message,
-          timestamp: new Date(),
-          isStreamer: false
+          timestamp: data.timestamp ? new Date(data.timestamp) : new Date(),
+          isStreamer: data.isStreamer || false
         };
-        setChatMessages(prev => [...prev, newMessage]);
+        
+        console.log('🔴 스트리머: 새 메시지 추가:', newMessage);
+        setChatMessages(prev => {
+          console.log('🔴 스트리머: 이전 메시지 개수:', prev.length);
+          const updated = [...prev, newMessage];
+          console.log('🔴 스트리머: 업데이트된 메시지 개수:', updated.length);
+          return updated;
+        });
         
         // 채팅창이 닫혀있으면 읽지 않은 메시지 카운트 증가
         if (!showChat) {
+          console.log('🔴 스트리머: 채팅창 닫힘, 읽지 않은 메시지 카운트 증가');
           setUnreadCount(prev => prev + 1);
+        }
+        
+        // 채팅창이 열려있으면 맨 아래로 스크롤
+        if (showChat) {
+          setTimeout(() => {
+            if (chatEndRef.current) {
+              console.log('🔴 스트리머: 채팅창 스크롤 이동');
+              chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
+            }
+          }, 100);
         }
       });
       
@@ -881,13 +906,13 @@ const PDFFeedbackBoard: React.FC = () => {
       // 약간의 지연 후 스트림 시작 알림 및 대기 중인 뷰어 처리
       setTimeout(() => {
         if (socketRef.current) {
-          console.log('시그널링 서버에 스트림 시작 알림 전송');
+          console.log('🔴 스트리머: 시그널링 서버에 스트림 시작 알림 전송, streamId:', streamId);
           socketRef.current.emit('start-stream', { streamId });
           
           // 대기 중인 뷰어들 처리
           processPendingViewers();
         } else {
-          console.error('시그널링 서버가 아직 연결되지 않음');
+          console.error('🔴 스트리머: 시그널링 서버가 아직 연결되지 않음');
         }
       }, 2000);
       
@@ -1003,7 +1028,18 @@ const PDFFeedbackBoard: React.FC = () => {
 
   // 채팅 메시지 전송
   const sendChatMessage = () => {
-    if (!chatInput.trim() || !socketRef.current) return;
+    if (!chatInput.trim() || !socketRef.current) {
+      console.log('🔴 스트리머: 채팅 전송 실패 - 입력값 또는 소켓 없음:', {
+        inputTrimmed: chatInput.trim(),
+        hasSocket: !!socketRef.current
+      });
+      return;
+    }
+    
+    console.log('🔴 스트리머: 채팅 메시지 전송 시작:', {
+      message: chatInput,
+      streamId: streamIdRef.current
+    });
     
     const message = {
       id: Date.now().toString() + Math.random().toString(36).substr(2),
@@ -1014,21 +1050,30 @@ const PDFFeedbackBoard: React.FC = () => {
     };
     
     // 로컬에 메시지 추가
-    setChatMessages(prev => [...prev, message]);
+    console.log('🔴 스트리머: 로컬 메시지 추가:', message);
+    setChatMessages(prev => {
+      const updated = [...prev, message];
+      console.log('🔴 스트리머: 로컬 메시지 업데이트 완료, 총 개수:', updated.length);
+      return updated;
+    });
     
     // 소켓을 통해 뷰어들에게 전송
-    socketRef.current.emit('chat-message', {
+    const socketData = {
       streamId: streamIdRef.current,
       senderName: '스트리머',
       message: chatInput,
       isStreamer: true
-    });
+    };
+    
+    console.log('🔴 스트리머: 소켓으로 메시지 전송:', socketData);
+    socketRef.current.emit('chat-message', socketData);
     
     setChatInput('');
     
     // 채팅창 맨 아래로 스크롤
     setTimeout(() => {
       if (chatEndRef.current) {
+        console.log('🔴 스트리머: 채팅창 스크롤 이동');
         chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
       }
     }, 100);
@@ -1541,7 +1586,7 @@ const PDFFeedbackBoard: React.FC = () => {
   }, []); // 의존성 배열을 비워서 컴포넌트 마운트 시에만 등록
 
   return (
-    <div className="flex flex-col w-full h-[100vh] min-h-0 max-h-[90vh] bg-white rounded-lg shadow-lg">
+    <div className={`flex flex-col w-full h-[100vh] min-h-0 max-h-[90vh] bg-white rounded-lg shadow-lg transition-all duration-300 ${showChat && isStreaming ? 'pr-80' : ''}`}>
       {showToast && (
         <div className="fixed top-6 left-1/2 transform -translate-x-1/2 z-[9999] bg-blue-600 text-white px-6 py-3 rounded-lg shadow-lg animate-fade-in-out">
           스트리밍 URL이 클립보드에 복사되었습니다!
@@ -1559,19 +1604,19 @@ const PDFFeedbackBoard: React.FC = () => {
           />
           <button
             onClick={() => fileInputRef.current?.click()}
-            className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+            className="flex items-center space-x-2 px-6 py-3 bg-gradient-to-r from-orange-400 via-pink-400 to-pink-500 text-white rounded-full shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-200 font-medium"
             disabled={loading}
           >
-            <Upload size={16} />
+            <Upload size={18} />
             <span>{loading ? '로딩 중...' : 'PDF 업로드'}</span>
           </button>
           
           {pdfLoaded && (
             <>
-              <div className="text-sm text-gray-600">
+              {/* <div className="text-sm text-gray-600">
                 <span>페이지 {currentPage} / {totalPages}</span>
                 <span className="ml-2">({Math.round(scale * 100)}%)</span>
-              </div>
+              </div> */}
               
               {/* 화이트보드 도구들 */}
               <div className="flex items-center space-x-2 border-l pl-4">
@@ -1597,29 +1642,29 @@ const PDFFeedbackBoard: React.FC = () => {
                 ))}
                 
                 {/* 브러시 크기 조절 */}
-                <div className="flex items-center space-x-1 border-l pl-2">
+                <div className="flex items-center space-x-1  pl-2">
                   <button
                     onClick={() => setBrushSize(Math.max(1, brushSize - 1))}
-                    className="p-1 rounded hover:bg-gray-200"
+                    className="p-1 rounded bg-gray-700 text-white border border-gray-500 hover:bg-gray-300"
                   >
                     <Minus size={12} />
                   </button>
-                  <span className="text-xs w-6 text-center">{brushSize}</span>
+                  <span className="text-xs w-6 text-center font-bold text-gray-800">{brushSize}</span>
                   <button
                     onClick={() => setBrushSize(Math.min(20, brushSize + 1))}
-                    className="p-1 rounded hover:bg-gray-200"
+                    className="p-1 rounded bg-gray-700 text-white border border-gray-500 hover:bg-gray-300"
                   >
                     <Plus size={12} />
                   </button>
                 </div>
                 
                 {/* 색상 선택 */}
-                <div className="flex items-center space-x-2">
+                <div className="flex items-center space-x-2 ">
                   <input
                     type="color"
                     value={brushColor}
                     onChange={(e) => setBrushColor(e.target.value)}
-                    className="w-8 h-8 rounded border cursor-pointer"
+                    className="w-8 h-8 rounded border cursor-pointer border-gray-400"
                     title="펜 색상"
                   />
                   
@@ -1630,7 +1675,7 @@ const PDFFeedbackBoard: React.FC = () => {
                         type="color"
                         value={maskColor}
                         onChange={(e) => setMaskColor(e.target.value)}
-                        className="w-8 h-8 rounded border cursor-pointer"
+                        className="w-8 h-8 rounded border cursor-pointer border-gray-400"
                         title="마스킹 색상"
                       />
                       <div className="flex flex-col items-center">
@@ -1667,38 +1712,28 @@ const PDFFeedbackBoard: React.FC = () => {
           <button
             onClick={toggleRecording}
             disabled={!pdfLoaded}
-            className={`flex items-center space-x-2 px-4 py-2 rounded-lg ${
+            className={`flex items-center space-x-2 px-6 py-3 rounded-full shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-200 font-medium ${
               isRecording
-                ? 'bg-red-600 text-white hover:bg-red-700'
-                : 'bg-green-600 text-white hover:bg-green-700'
-            } disabled:bg-gray-400 disabled:cursor-not-allowed`}
+                ? 'bg-gradient-to-r from-red-500 to-red-600 text-white hover:from-red-600 hover:to-red-700'
+                : 'bg-gradient-to-r from-teal-400 to-sky-600 text-white hover:from-teal-500 hover:to-sky-700'
+            } disabled:bg-gray-400 disabled:cursor-not-allowed disabled:transform-none`}
           >
-            {isRecording ? <Square size={16} /> : <Play size={16} />}
+            {isRecording ? <Square size={18} /> : <Play size={18} />}
             <span>{isRecording ? '녹화 중지' : '녹화 시작'}</span>
-            {/* {isRecording && (
-              <span className="bg-red-800 px-2 py-1 rounded text-sm">
-                {Math.floor(recordingTime / 60)}:{(recordingTime % 60).toString().padStart(2, '0')}
-              </span>
-            )} */}
           </button>
 
           {/* 실시간 스트리밍 버튼 */}
           <button
             onClick={toggleStreaming}
             disabled={!pdfLoaded}
-            className={`flex items-center space-x-2 px-4 py-2 rounded-lg ${
+            className={`flex items-center space-x-2 px-6 py-3 rounded-full shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-200 font-medium ${
               isStreaming
-                ? 'bg-purple-600 text-white hover:bg-purple-700'
-                : 'bg-blue-600 text-white hover:bg-blue-700'
-            } disabled:bg-gray-400 disabled:cursor-not-allowed`}
+                ? 'bg-gradient-to-r from-orange-400 to-orange-600 text-white hover:from-orange-500 hover:to-orange-700'
+                : 'bg-gradient-to-r from-blue-400 to-blue-600 text-white hover:from-blue-500 hover:to-blue-700'
+            } disabled:bg-gray-400 disabled:cursor-not-allowed disabled:transform-none`}
           >
-            {isStreaming ? <Square size={16} /> : <Share size={16} />}
+            {isStreaming ? <Square size={18} /> : <Share size={18} />}
             <span>{isStreaming ? '스트리밍 중지' : '실시간 공유'}</span>
-            {/* {isStreaming && (
-              <span className="bg-purple-800 px-2 py-1 rounded text-sm">
-                {Math.floor(streamingTime / 60)}:{(streamingTime % 60).toString().padStart(2, '0')}
-              </span>
-            )} */}
           </button>
 
           {/* 스트리밍 URL 공유 버튼 */}
@@ -1706,18 +1741,18 @@ const PDFFeedbackBoard: React.FC = () => {
             <>
               <button
                 onClick={() => setShowStreamingModal(true)}
-                className="flex items-center space-x-2 px-3 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
+                className="flex items-center space-x-2 px-5 py-3 bg-gradient-to-r from-indigo-400 to-indigo-600 text-white rounded-full shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-200 font-medium hover:from-indigo-500 hover:to-indigo-700"
               >
-                <Users size={16} />
+                <Users size={18} />
                 <span>공유 링크</span>
               </button>
 
               {/* 채팅 버튼 */}
               <button
                 onClick={toggleChat}
-                className="relative flex items-center space-x-2 px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+                className="relative flex items-center space-x-2 px-5 py-3 bg-gradient-to-r from-green-400 to-green-600 text-white rounded-full shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-200 font-medium hover:from-green-500 hover:to-green-700"
               >
-                <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
                 </svg>
                 <span>채팅</span>
@@ -1734,7 +1769,7 @@ const PDFFeedbackBoard: React.FC = () => {
           {recordedFiles.length > 0 && (
             <button
               onClick={() => setShowFileList(!showFileList)}
-              className="flex items-center space-x-2 px-3 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
+              className="flex items-center space-x-2 px-5 py-3 bg-gradient-to-r from-gray-500 to-gray-700 text-white rounded-full shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-200 font-medium hover:from-gray-600 hover:to-gray-800"
             >
               <span>파일 ({recordedFiles.length})</span>
             </button>
@@ -1847,82 +1882,87 @@ const PDFFeedbackBoard: React.FC = () => {
         </div>
       )}
 
-      {/* 채팅 모달 */}
+      {/* 채팅 패널 */}
       {showChat && isStreaming && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-md h-[600px] mx-4 flex flex-col">
-            <div className="flex items-center justify-between p-4 border-b">
-              <h3 className="text-lg font-semibold flex items-center space-x-2">
-                <svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-                </svg>
-                <span>실시간 채팅</span>
-                <span className="text-sm text-gray-500">({viewerCount}명 시청 중)</span>
-              </h3>
+        <div className="fixed top-0 right-0 h-full w-80 bg-white shadow-xl border-l border-gray-200 z-40 flex flex-col">
+          {/* 채팅 헤더 */}
+          <div className="flex items-center justify-between p-4 border-b border-gray-200 bg-gradient-to-r from-blue-500 to-blue-600">
+            <div className="flex items-center space-x-2">
+              <MessageCircle className="text-white" size={20} />
+              <h3 className="text-white font-semibold">실시간 채팅</h3>
+              <span className="bg-white/20 text-white text-xs px-2 py-1 rounded-full">
+                {viewerCount}명 시청 중
+              </span>
+            </div>
+            <button
+              onClick={toggleChat}
+              className="text-white/80 hover:text-white p-1 rounded-md hover:bg-white/10 transition-colors"
+            >
+              <X size={18} />
+            </button>
+          </div>
+          
+          {/* 채팅 메시지 영역 */}
+          <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-50">
+            {/* 디버깅 정보 */}
+            <div className="text-xs text-gray-400 text-center border-b pb-2">
+              메시지 개수: {chatMessages.length} | 뷰어: {viewerCount}명 | 스트림: {streamIdRef.current}
+            </div>
+            
+            {chatMessages.length === 0 ? (
+              <div className="text-center text-gray-500 mt-8">
+                <MessageCircle className="mx-auto mb-2 text-gray-400" size={48} />
+                <p>아직 채팅 메시지가 없습니다.</p>
+                <p className="text-sm">첫 번째 메시지를 보내보세요!</p>
+              </div>
+            ) : (
+              chatMessages.map((msg) => {
+                return (
+                  <div
+                    key={msg.id}
+                    className={`flex ${msg.isStreamer ? 'justify-end' : 'justify-start'}`}
+                  >
+                    <div
+                      className={`max-w-[80%] rounded-lg px-3 py-2 ${
+                        msg.isStreamer
+                          ? 'bg-blue-500 text-white rounded-br-none'
+                          : 'bg-white text-gray-800 shadow-sm border rounded-bl-none'
+                      }`}
+                    >
+                      <div className={`text-xs mb-1 ${msg.isStreamer ? 'text-blue-100' : 'text-gray-500'}`}>
+                        {msg.sender} • {msg.timestamp.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                      </div>
+                      <div className="break-words">{msg.message}</div>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+            <div ref={chatEndRef} />
+          </div>
+          
+          {/* 채팅 입력 영역 */}
+          <div className="border-t border-gray-200 p-4 bg-white">
+            <div className="flex space-x-2">
+              <input
+                type="text"
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                onKeyPress={handleChatKeyPress}
+                placeholder="메시지를 입력하세요..."
+                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-700"
+                maxLength={500}
+              />
               <button
-                onClick={toggleChat}
-                className="text-gray-500 hover:text-gray-700"
+                onClick={sendChatMessage}
+                disabled={!chatInput.trim()}
+                className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors flex items-center"
               >
-                ✕
+                <Send size={16} />
               </button>
             </div>
-            
-            {/* 채팅 메시지 영역 */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-3">
-              {chatMessages.length === 0 ? (
-                <div className="text-center text-gray-500 mt-10">
-                  <svg className="mx-auto mb-4" width={48} height={48} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-                  </svg>
-                  <p>아직 채팅 메시지가 없습니다.</p>
-                  <p className="text-sm">뷰어들과 실시간으로 소통해보세요!</p>
-                </div>
-              ) : (
-                <>
-                  {chatMessages.map((msg) => (
-                    <div key={msg.id} className={`flex ${msg.isStreamer ? 'justify-end' : 'justify-start'}`}>
-                      <div className={`max-w-[75%] ${
-                        msg.isStreamer 
-                          ? 'bg-blue-500 text-white rounded-l-lg rounded-tr-lg' 
-                          : 'bg-gray-200 text-gray-800 rounded-r-lg rounded-tl-lg'
-                      } px-3 py-2`}>
-                        <div className="text-xs opacity-75 mb-1">
-                          {msg.sender} • {msg.timestamp.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-                        </div>
-                        <div className="text-sm whitespace-pre-wrap break-words">
-                          {msg.message}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                  <div ref={chatEndRef} />
-                </>
-              )}
-            </div>
-            
-            {/* 메시지 입력 영역 */}
-            <div className="p-4 border-t">
-              <div className="flex space-x-2">
-                <input
-                  type="text"
-                  value={chatInput}
-                  onChange={(e) => setChatInput(e.target.value)}
-                  onKeyPress={handleChatKeyPress}
-                  placeholder="메시지를 입력하세요..."
-                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  maxLength={500}
-                />
-                <button
-                  onClick={sendChatMessage}
-                  disabled={!chatInput.trim()}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
-                >
-                  전송
-                </button>
-              </div>
-              <div className="text-xs text-gray-500 mt-1">
-                {chatInput.length}/500
-              </div>
+            <div className="text-xs text-gray-500 mt-1 text-center">
+              {chatInput.length}/500
             </div>
           </div>
         </div>
@@ -1930,8 +1970,8 @@ const PDFFeedbackBoard: React.FC = () => {
 
       {/* 녹화된 파일 목록 모달 */}
       {showFileList && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl p-6 max-w-2xl w-full mx-4 max-h-[80vh] overflow-y-auto">
+        <div className="fixed inset-0 bg-white/60 backdrop-blur-sm flex items-center justify-center z-50 transition-all">
+          <div className="bg-white rounded-lg shadow-2xl p-6 max-w-2xl w-full mx-4 max-h-[80vh] overflow-y-auto border border-gray-200">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold">녹화된 파일 목록</h3>
               <button
@@ -2122,7 +2162,7 @@ const PDFFeedbackBoard: React.FC = () => {
                           goToPage(page);
                         }
                       }}
-                      className="w-16 px-2 py-1 text-center border border-gray-300 rounded"
+                      className="w-16 px-2 py-1 text-center border border-gray-300 rounded text-gray-900"
                       min={1}
                       max={totalPages}
                     />

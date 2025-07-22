@@ -106,6 +106,33 @@ io.on('connection', (socket) => {
     });
   });
 
+  // 채팅 메시지 전달
+  socket.on('chat-message', (data) => {
+    const { streamId, senderName, message, isStreamer } = data;
+    console.log('Chat message received:', {
+      streamId,
+      senderName,
+      message: message.substring(0, 50) + '...',
+      isStreamer,
+      from: socket.id
+    });
+    
+    const stream = activeStreams.get(streamId);
+    if (stream) {
+      // 해당 스트림의 모든 참여자에게 메시지 브로드캐스트 (자신 제외)
+      socket.to(streamId).emit('chat-message', {
+        senderName,
+        message,
+        isStreamer,
+        timestamp: new Date()
+      });
+      
+      console.log('Chat message broadcasted to stream:', streamId);
+    } else {
+      console.log('Stream not found for chat message:', streamId);
+    }
+  });
+
   // 스트림 종료
   socket.on('stop-stream', (data) => {
     const { streamId } = data;

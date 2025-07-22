@@ -2,7 +2,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
-import { Volume2, VolumeX, Maximize, Minimize, Users, Clock, Signal } from 'lucide-react';
+import { Volume2, VolumeX, Maximize, Minimize, Users, Clock, Signal, MessageCircle, X, Send } from 'lucide-react';
 
 const StreamViewer: React.FC = () => {
   const params = useParams();
@@ -88,8 +88,9 @@ const StreamViewer: React.FC = () => {
         socketRef.current = socket;
 
         socket.on('connect', () => {
-          console.log('시그널링 서버에 연결되었습니다');
+          console.log('🟢 뷰어: 시그널링 서버에 연결되었습니다');
           // 스트림에 참여
+          console.log('🟢 뷰어: 스트림 참여 요청:', { streamId });
           socket.emit('join-stream', { streamId });
         });
 
@@ -126,20 +127,33 @@ const StreamViewer: React.FC = () => {
         });
 
         socket.on('chat-message', (data) => {
-          console.log('채팅 메시지 수신:', data);
+          console.log('🟢 뷰어: 채팅 메시지 수신:', {
+            senderName: data.senderName,
+            message: data.message,
+            isStreamer: data.isStreamer
+          });
+          
           const newMessage = {
             id: Date.now().toString() + Math.random().toString(36).substr(2),
             sender: data.senderName || '스트리머',
             message: data.message,
-            timestamp: new Date(),
+            timestamp: data.timestamp ? new Date(data.timestamp) : new Date(),
             isStreamer: data.isStreamer || false
           };
-          setChatMessages(prev => [...prev, newMessage]);
+          
+          console.log('🟢 뷰어: 새 메시지 추가:', newMessage);
+          setChatMessages(prev => {
+            console.log('🟢 뷰어: 이전 메시지 개수:', prev.length);
+            const updated = [...prev, newMessage];
+            console.log('🟢 뷰어: 업데이트된 메시지 개수:', updated.length);
+            return updated;
+          });
 
           // 채팅창이 열려있으면 맨 아래로 스크롤
           if (showChat) {
             setTimeout(() => {
               if (chatEndRef.current) {
+                console.log('🟢 뷰어: 채팅창 스크롤 이동');
                 chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
               }
             }, 100);
@@ -377,7 +391,19 @@ const StreamViewer: React.FC = () => {
 
   // 채팅 메시지 전송
   const sendChatMessage = () => {
-    if (!chatInput.trim() || !socketRef.current) return;
+    if (!chatInput.trim() || !socketRef.current) {
+      console.log('🟢 뷰어: 채팅 전송 실패 - 입력값 또는 소켓 없음:', {
+        inputTrimmed: chatInput.trim(),
+        hasSocket: !!socketRef.current
+      });
+      return;
+    }
+
+    console.log('🟢 뷰어: 채팅 메시지 전송 시작:', {
+      message: chatInput,
+      streamId: streamId,
+      viewerName: viewerName
+    });
 
     const message = {
       id: Date.now().toString() + Math.random().toString(36).substr(2),
@@ -388,21 +414,30 @@ const StreamViewer: React.FC = () => {
     };
 
     // 로컬에 메시지 추가
-    setChatMessages(prev => [...prev, message]);
+    console.log('🟢 뷰어: 로컬 메시지 추가:', message);
+    setChatMessages(prev => {
+      const updated = [...prev, message];
+      console.log('🟢 뷰어: 로컬 메시지 업데이트 완료, 총 개수:', updated.length);
+      return updated;
+    });
 
     // 소켓을 통해 스트리머에게 전송
-    socketRef.current.emit('chat-message', {
+    const socketData = {
       streamId,
       senderName: viewerName,
       message: chatInput,
       isStreamer: false
-    });
+    };
+    
+    console.log('🟢 뷰어: 소켓으로 메시지 전송:', socketData);
+    socketRef.current.emit('chat-message', socketData);
 
     setChatInput('');
 
     // 채팅창 맨 아래로 스크롤
     setTimeout(() => {
       if (chatEndRef.current) {
+        console.log('🟢 뷰어: 채팅창 스크롤 이동');
         chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
       }
     }, 100);
@@ -469,7 +504,7 @@ const StreamViewer: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gray-900">
+    <div className={`min-h-screen bg-gray-900 transition-all duration-300 ${showChat ? 'pr-80' : ''}`}>
       {/* 헤더 */}
       <div className="bg-gray-800 border-b border-gray-700 px-4 py-3">
         <div className="flex items-center justify-between">
@@ -549,9 +584,7 @@ const StreamViewer: React.FC = () => {
                   className="p-2 text-white hover:bg-white hover:bg-opacity-20 rounded-full"
                   title="채팅"
                 >
-                  <svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                  </svg>
+                  <MessageCircle size={20} />
                 </button>
               </div>
             </div>
@@ -571,81 +604,87 @@ const StreamViewer: React.FC = () => {
         )}
       </div>
 
-      {/* 채팅 모달 */}
+      {/* 채팅 패널 */}
       {showChat && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-md h-[600px] mx-4 flex flex-col">
-            <div className="flex items-center justify-between p-4 border-b">
-              <h3 className="text-lg font-semibold flex items-center space-x-2">
-                <svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                </svg>
-                <span>채팅</span>
-                <span className="text-sm text-gray-500">({viewerName})</span>
-              </h3>
+        <div className="fixed top-0 right-0 h-full w-80 bg-white shadow-xl border-l border-gray-200 z-40 flex flex-col">
+          {/* 채팅 헤더 */}
+          <div className="flex items-center justify-between p-4 border-b border-gray-200 bg-gradient-to-r from-green-500 to-green-600">
+            <div className="flex items-center space-x-2">
+              <MessageCircle className="text-white" size={20} />
+              <h3 className="text-white font-semibold">실시간 채팅</h3>
+              <span className="bg-white/20 text-white text-xs px-2 py-1 rounded-full">
+                {viewerName}
+              </span>
+            </div>
+            <button
+              onClick={toggleChat}
+              className="text-white/80 hover:text-white p-1 rounded-md hover:bg-white/10 transition-colors"
+            >
+              <X size={18} />
+            </button>
+          </div>
+          
+          {/* 채팅 메시지 영역 */}
+          <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-50">
+            {/* 디버깅 정보 */}
+            <div className="text-xs text-gray-400 text-center border-b pb-2">
+              메시지 개수: {chatMessages.length} | 뷰어: {viewerName}
+            </div>
+            
+            {chatMessages.length === 0 ? (
+              <div className="text-center text-gray-500 mt-8">
+                <MessageCircle className="mx-auto mb-2 text-gray-400" size={48} />
+                <p>아직 채팅 메시지가 없습니다.</p>
+                <p className="text-sm">스트리머와 소통해보세요!</p>
+              </div>
+            ) : (
+              chatMessages.map((msg) => {
+                return (
+                  <div
+                    key={msg.id}
+                    className={`flex ${msg.isStreamer ? 'justify-start' : 'justify-end'}`}
+                  >
+                    <div
+                      className={`max-w-[80%] rounded-lg px-3 py-2 ${
+                        msg.isStreamer
+                          ? 'bg-white text-gray-800 shadow-sm border rounded-bl-none'
+                          : 'bg-green-500 text-white rounded-br-none'
+                      }`}
+                    >
+                      <div className={`text-xs mb-1 ${msg.isStreamer ? 'text-gray-500' : 'text-green-100'}`}>
+                        {msg.sender} • {msg.timestamp.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                      </div>
+                      <div className="break-words">{msg.message}</div>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+            <div ref={chatEndRef} />
+          </div>
+          
+          {/* 채팅 입력 영역 */}
+          <div className="border-t border-gray-200 p-4 bg-white">
+            <div className="flex space-x-2">
+              <input
+                type="text"
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                onKeyPress={handleChatKeyPress}
+                placeholder="메시지를 입력하세요..."
+                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent text-gray-700"
+                maxLength={500}
+              />
               <button
-                onClick={toggleChat}
-                className="text-gray-500 hover:text-gray-700"
+                onClick={sendChatMessage}
+                disabled={!chatInput.trim()}
+                className="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors flex items-center"
               >
-                ✕
+                <Send size={16} />
               </button>
             </div>
-
-            {/* 채팅 메시지 영역 */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-3">
-              {chatMessages.length === 0 ? (
-                <div className="text-center text-gray-500 mt-10">
-                  <svg className="mx-auto mb-4" width={48} height={48} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                  </svg>
-                  <p>아직 채팅 메시지가 없습니다.</p>
-                  <p className="text-sm">스트리머와 실시간으로 소통해보세요!</p>
-                </div>
-              ) : (
-                <>
-                  {chatMessages.map((msg) => (
-                    <div key={msg.id} className={`flex ${msg.isStreamer ? 'justify-start' : 'justify-end'}`}>
-                      <div className={`max-w-[75%] ${msg.isStreamer
-                          ? 'bg-gray-200 text-gray-800 rounded-r-lg rounded-tl-lg'
-                          : 'bg-blue-500 text-white rounded-l-lg rounded-tr-lg'
-                        } px-3 py-2`}>
-                        <div className="text-xs opacity-75 mb-1">
-                          {msg.sender} • {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </div>
-                        <div className="text-sm whitespace-pre-wrap break-words">
-                          {msg.message}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                  <div ref={chatEndRef} />
-                </>
-              )}
-            </div>
-
-            {/* 메시지 입력 영역 */}
-            <div className="p-4 border-t">
-              <div className="flex space-x-2">
-                <input
-                  type="text"
-                  value={chatInput}
-                  onChange={(e) => setChatInput(e.target.value)}
-                  onKeyPress={handleChatKeyPress}
-                  placeholder="메시지를 입력하세요..."
-                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  maxLength={500}
-                />
-                <button
-                  onClick={sendChatMessage}
-                  disabled={!chatInput.trim()}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
-                >
-                  전송
-                </button>
-              </div>
-              <div className="text-xs text-gray-500 mt-1">
-                {chatInput.length}/500
-              </div>
+            <div className="text-xs text-gray-500 mt-1 text-center">
+              {chatInput.length}/500
             </div>
           </div>
         </div>
