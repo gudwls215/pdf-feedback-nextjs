@@ -8,13 +8,13 @@ const server = http.createServer(app);
 
 // CORS 설정
 app.use(cors({
-  origin: ["http://localhost:3000", "http://127.0.0.1:3000"],
+  origin: true,
   credentials: true
 }));
 
 const io = socketIo(server, {
   cors: {
-    origin: ["http://localhost:3000", "http://127.0.0.1:3000"],
+    origin: true,
     methods: ["GET", "POST"],
     credentials: true
   }
@@ -168,8 +168,8 @@ io.on('connection', (socket) => {
   });
 });
 
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 4001;
 server.listen(PORT, () => {
   console.log(`Signaling server running on port ${PORT}`);
-  console.log(`WebSocket endpoint: ws://localhost:${PORT}`);
+  console.log(`WebSocket endpoint: ws://0.0.0.0:${PORT}`);
 });

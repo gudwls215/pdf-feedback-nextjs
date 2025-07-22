@@ -19,8 +19,8 @@ npm run dev
 
 서버가 실행되면 콘솔에 다음이 표시됩니다:
 ```
-Signaling server running on port 3001
-WebSocket endpoint: ws://localhost:3001
+Signaling server running on port 4001
+WebSocket endpoint: ws://localhost:4001
 ```
 
 ## 2. Next.js 애플리케이션 실행
@@ -33,18 +33,18 @@ npm run dev
 ## 3. 스트리밍 테스트 방법
 
 ### 방법 1: 같은 브라우저에서 테스트
-1. **스트리머 역할**: `http://localhost:3000`에서 PDF를 업로드하고 "실시간 공유" 버튼 클릭
+1. **스트리머 역할**: `http://localhost:4000`에서 PDF를 업로드하고 "실시간 공유" 버튼 클릭
 2. **새 탭 열기**: 스트리밍 URL을 복사하여 새 탭에서 접속
 3. **결과**: 두 번째 탭에서 첫 번째 탭의 화면을 실시간으로 볼 수 있음
 
 ### 방법 2: 다른 브라우저에서 테스트 (권장)
-1. **Chrome에서 스트리머**: `http://localhost:3000`에서 스트리밍 시작
+1. **Chrome에서 스트리머**: `http://localhost:4000`에서 스트리밍 시작
 2. **Firefox에서 뷰어**: 스트리밍 URL을 복사하여 Firefox에서 접속
 3. **결과**: Firefox에서 Chrome의 화면을 실시간으로 볼 수 있음
 
 ### 방법 3: 다른 기기에서 테스트
-1. **메인 PC에서 스트리머**: `http://localhost:3000`에서 스트리밍 시작
-2. **다른 기기에서 뷰어**: 같은 네트워크의 다른 기기에서 `http://[PC IP]:3000/stream/[streamId]` 접속
+1. **메인 PC에서 스트리머**: `http://localhost:4000`에서 스트리밍 시작
+2. **다른 기기에서 뷰어**: 같은 네트워크의 다른 기기에서 `http://[PC IP]:4000/stream/[streamId]` 접속
 
 ## 4. 테스트 시 확인사항
 
@@ -64,7 +64,7 @@ npm run dev
 ## 5. 트러블슈팅
 
 ### 연결이 안 되는 경우:
-1. **시그널링 서버 상태 확인**: `http://localhost:3001`에서 서버 상태 확인
+1. **시그널링 서버 상태 확인**: `http://localhost:4001`에서 서버 상태 확인
 2. **방화벽 설정**: Windows 방화벽에서 Node.js와 브라우저 허용
 3. **브라우저 콘솔 확인**: F12를 눌러 콘솔에서 에러 메시지 확인
 4. **STUN 서버 연결**: 네트워크가 STUN 서버에 접근 가능한지 확인
@@ -96,7 +96,7 @@ Connection state: connected
 
 ### 로컬 네트워크에서 테스트하려면:
 1. **IP 주소 확인**: `ipconfig`로 PC의 IP 주소 확인
-2. **방화벽 설정**: 포트 3000, 3001을 방화벽에서 허용
+2. **방화벽 설정**: 포트 4000, 4001을 방화벽에서 허용
 3. **라우터 설정**: 필요시 포트 포워딩 설정
 
 ### 외부 네트워크에서 테스트하려면:
@@ -106,7 +106,7 @@ Connection state: connected
 
 ## 예상되는 스트리밍 URL 형식:
 ```
-http://localhost:3000/stream/lt7r9x2s8k1a3mno
+http://localhost:4000/stream/lt7r9x2s8k1a3mno
 ```
 
 이 URL을 다른 브라우저나 기기에서 열면 실시간 스트림을 볼 수 있습니다.

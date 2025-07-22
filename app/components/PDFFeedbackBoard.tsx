@@ -541,7 +541,8 @@ const PDFFeedbackBoard: React.FC = () => {
     
     // Socket.IO 동적 임포트
     import('socket.io-client').then((io) => {
-      const socket = io.default('http://192.168.0.152:3001', {
+      const signalingServerUrl = process.env.NEXT_PUBLIC_SIGNALING_SERVER_URL || '/api/signaling';
+      const socket = io.default(signalingServerUrl, {
         transports: ['websocket', 'polling']
       });
       

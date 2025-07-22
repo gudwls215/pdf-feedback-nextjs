@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  # 시그널링 서버
+  signaling-server:
+    build:
+      context: ./signaling-server
+      dockerfile: Dockerfile
+    container_name: pdf-feedback-signaling
+    ports:
+      - "4001:4001"
+    environment:
+      - NODE_ENV=production
+      - PORT=4001
+    restart: unless-stopped
+    networks:
+      - pdf-feedback-network
+
+  # 메인 Next.js 애플리케이션
+  web-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: pdf-feedback-web
+    ports:
+      - "4000:4000"
+    environment:
+      - NODE_ENV=production
+      - PORT=4000
+      - HOSTNAME=0.0.0.0
+      # 시그널링 서버 주소를 컨테이너 이름으로 설정
+      - SIGNALING_SERVER_URL=http://signaling-server:4001
+    depends_on:
+      - signaling-server
+    restart: unless-stopped
+    networks:
+      - pdf-feedback-network
+
+networks:
+  pdf-feedback-network:
+    driver: bridge
+
+volumes:
+  # 필요시 볼륨 추가
