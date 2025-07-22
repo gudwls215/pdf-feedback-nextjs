@@ -177,8 +177,16 @@ const PDFFeedbackBoard: React.FC = () => {
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
-    if (!file || file.type !== 'application/pdf') {
+    // PDF MIME 타입 허용 목록
+    const allowedTypes = [
+      'application/pdf',
+      'application/x-hwpdf',
+      'application/haansoftpdf',
+      'application/octet-stream', // 일부 브라우저에서 PDF로 인식
+    ];
+    if (!file || (!allowedTypes.includes(file.type) && !file.name.toLowerCase().endsWith('.pdf'))) {
       console.error('Invalid file type:', file?.type);
+      alert('PDF 파일만 업로드 가능합니다. (한글 PDF 포함)');
       return;
     }
 
