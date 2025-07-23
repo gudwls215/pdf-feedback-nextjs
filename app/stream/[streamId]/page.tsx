@@ -355,7 +355,7 @@ const StreamViewer: React.FC = () => {
         clearInterval(connectionTimeRef.current);
       }
     };
-  }, [streamId, showChat]);
+  }, [streamId]);
 
   const toggleMute = () => {
     if (videoRef.current) {
