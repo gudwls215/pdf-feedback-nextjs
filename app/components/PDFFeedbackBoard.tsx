@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Upload, Play, Square, ChevronLeft, ChevronRight, Pen, Type, Eraser, MousePointer, Minus, Plus, Share, Users, Copy, ExternalLink, MessageCircle, X, Send, Undo2, Redo2 } from 'lucide-react';
+import { Upload, Play, Square, ChevronLeft, ChevronRight, Pen, Type, Eraser, MousePointer, Minus, Plus, Share, Users, Copy, ExternalLink, MessageCircle, X, Send, Undo2, Redo2, Trash2 } from 'lucide-react';
 
 // 타입 정의
 type PDFDocumentProxy = {
@@ -94,6 +94,21 @@ const PDFFeedbackBoard: React.FC = () => {
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
   const textInputRef = useRef<HTMLInputElement>(null);
   const boardRef = useRef<HTMLDivElement>(null);
+
+  // 새로고침 경고: 실시간 공유 중 또는 녹화 중일 때
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (isStreaming || isRecording) {
+        e.preventDefault();
+        e.returnValue = '';
+        return '';
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [isStreaming, isRecording]);
 
   // 스트리밍 시간 업데이트를 위한 useEffect
   useEffect(() => {
@@ -1790,135 +1805,10 @@ const PDFFeedbackBoard: React.FC = () => {
           </button>
 
           {pdfLoaded && (
-            <>
-              {/* <div className="text-sm text-gray-600">
-                <span>페이지 {currentPage} / {totalPages}</span>
-                <span className="ml-2">({Math.round(scale * 100)}%)</span>
-              </div> */}
-
-              {/* 화이트보드 도구들 */}
-              <div className="flex items-center space-x-2 border-l pl-4">
-                {[
-                  { tool: 'pointer' as const, icon: MousePointer, label: '포인터' },
-                  { tool: 'pen' as const, icon: Pen, label: '펜' },
-                  { tool: 'text' as const, icon: Type, label: '텍스트' },
-                  { tool: 'mask' as const, icon: Square, label: '마스킹' },
-                  { tool: 'eraser' as const, icon: Eraser, label: '지우개' },
-                ].map(({ tool, icon: Icon, label }) => (
-                  <button
-                    key={tool}
-                    onClick={() => setSelectedTool(tool)}
-                    className={`p-2 rounded-lg transition-colors ${selectedTool === tool
-                        ? 'bg-blue-100 text-blue-600 border border-blue-300'
-                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                      }`}
-                    title={label}
-                  >
-                    <Icon size={16} />
-                  </button>
-                ))}
-
-                {/* 도구 버튼과 브러시 크기 조절 사이 여백 */}
-                <div className="w-4" />
-
-                {/* 브러시 크기 조절 */}
-                <div className="flex items-center space-x-1  pl-2">
-                  <button
-                    onClick={() => setBrushSize(Math.max(1, brushSize - 1))}
-                    className="p-1 rounded bg-gray-700 text-white border border-gray-500 hover:bg-gray-300"
-                  >
-                    <Minus size={12} />
-                  </button>
-                  <span className="text-xs w-6 text-center font-bold text-gray-800">{brushSize}</span>
-                  <button
-                    onClick={() => setBrushSize(Math.min(20, brushSize + 1))}
-                    className="p-1 rounded bg-gray-700 text-white border border-gray-500 hover:bg-gray-300"
-                  >
-                    <Plus size={12} />
-                  </button>
-                </div>
-
-
-                <div className="flex items-center space-x-2 ">
-
-                  {/* 색상 선택 */}
-                  {selectedTool != 'mask' && (
-                    <div className="flex items-center space-x-2 pl-2">
-                      <input
-                        type="color"
-                        value={brushColor}
-                        onChange={(e) => setBrushColor(e.target.value)}
-                        className="w-8 h-8 rounded border cursor-pointer border-gray-400"
-                        title="펜 색상"
-                      />
-                    </div>
-                  )}
-
-                  {/* 마스킹 도구 선택 시 추가 컨트롤 */}
-                  {selectedTool === 'mask' && (
-                    <div className="flex items-center space-x-2 pl-2">
-                      <input
-                        type="color"
-                        value={maskColor}
-                        onChange={(e) => setMaskColor(e.target.value)}
-                        className="w-8 h-8 rounded border cursor-pointer border-gray-400"
-                        title="마스킹 색상"
-                      />
-                      <div className="flex flex-col items-center">
-                        <span className="text-xs text-gray-600 mb-1">투명도</span>
-                        <input
-                          type="range"
-                          min="0.01"
-                          max="0.5"
-                          step="0.01"
-                          value={maskOpacity}
-                          onChange={(e) => setMaskOpacity(parseFloat(e.target.value))}
-                          className="w-16 h-1"
-                          title={`투명도: ${Math.round(maskOpacity * 100)}%`}
-                        />
-                        <span className="text-xs text-gray-500">{Math.round(maskOpacity * 100)}%</span>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* 클리어 버튼 */}
-                <button
-                  onClick={clearOverlay}
-                  className="px-3 py-1 text-xs bg-red-100 text-red-600 rounded hover:bg-red-200"
-                >
-                  지우기
-                </button>
-
-                {/* Undo/Redo 버튼들 */}
-                <div className="flex items-center space-x-1 border-l pl-2">
-                  <button
-                    onClick={undo}
-                    disabled={historyStep <= 0}
-                    className={`p-2 rounded-lg transition-colors ${
-                      historyStep <= 0 
-                        ? 'bg-gray-100 text-gray-400 cursor-not-allowed' 
-                        : 'bg-blue-100 text-blue-600 hover:bg-blue-200'
-                    }`}
-                    title="실행 취소 (Ctrl+Z)"
-                  >
-                    <Undo2 size={16} />
-                  </button>
-                  <button
-                    onClick={redo}
-                    disabled={historyStep >= canvasHistory.length - 1}
-                    className={`p-2 rounded-lg transition-colors ${
-                      historyStep >= canvasHistory.length - 1 
-                        ? 'bg-gray-100 text-gray-400 cursor-not-allowed' 
-                        : 'bg-green-100 text-green-600 hover:bg-green-200'
-                    }`}
-                    title="다시 실행 (Ctrl+Y)"
-                  >
-                    <Redo2 size={16} />
-                  </button>
-                </div>
-              </div>
-            </>
+            <div className="text-sm text-gray-600">
+              <span>페이지 {currentPage} / {totalPages}</span>
+              <span className="ml-2">({Math.round(scale * 100)}%)</span>
+            </div>
           )}
         </div>
 
@@ -2256,10 +2146,154 @@ const PDFFeedbackBoard: React.FC = () => {
               className="flex-1 overflow-auto bg-gray-50 relative"
               style={{
                 cursor: selectedTool === 'pointer' && !isDragging ? 'grab' :
-                  selectedTool === 'pointer' && isDragging ? 'grabbing' : 'default'
+                  selectedTool === 'pointer' && isDragging ? 'grabbing' : 'default',
+                position: 'relative'
               }}
               onWheel={handleBoardWheel}
             >
+              {/* 플로팅 화이트보드 툴바 */}
+              {pdfLoaded && (
+                <div
+                  className="fixed z-30 bg-white/95 backdrop-blur-sm rounded-xl shadow-xl border border-gray-200/50 p-3"
+                  style={{
+                    minWidth: '60px',
+                    top: boardRef?.current ? boardRef.current.getBoundingClientRect().top + 16 : 16,
+                    left: boardRef?.current ? boardRef.current.getBoundingClientRect().left + 16 : 16,
+                  }}
+                >
+                  <div className="flex flex-col space-y-3">
+                    {/* 도구 선택 버튼들 - 세로 배열 */}
+                    <div className="flex flex-col items-center space-y-2">
+                      {[
+                        { tool: 'pointer' as const, icon: MousePointer, label: '포인터' },
+                        { tool: 'pen' as const, icon: Pen, label: '펜' },
+                        { tool: 'text' as const, icon: Type, label: '텍스트' },
+                        { tool: 'mask' as const, icon: Square, label: '마스킹' },
+                        { tool: 'eraser' as const, icon: Eraser, label: '지우개' },
+                      ].map(({ tool, icon: Icon, label }) => (
+                        <button
+                          key={tool}
+                          onClick={() => setSelectedTool(tool)}
+                          className={`w-9 h-9 flex items-center justify-center rounded-full transition-all duration-200 ${selectedTool === tool
+                              ? 'bg-blue-500 text-white shadow-md scale-105'
+                              : 'bg-gray-100 text-gray-600 hover:bg-gray-200 hover:scale-105'
+                            }`}
+                          title={label}
+                        >
+                          <Icon size={24} />
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* 구분선 */}
+                    <div className="h-px bg-gray-200"></div>
+
+                    {/* 브러시 크기 조절 */}
+                    <div className="flex flex-col items-center space-y-2">
+                      <span className="text-xs text-gray-600 font-medium">크기</span>
+                      <div className="flex items-center space-y-1 flex-col">
+                        <button
+                          onClick={() => setBrushSize(Math.min(20, brushSize + 1))}
+                          className="p-1 rounded bg-gray-700 text-white border border-gray-500 hover:bg-gray-600 transition-colors"
+                        >
+                          <Plus size={12} />
+                        </button>
+                        <span className="text-xs w-6 text-center font-bold text-gray-800 py-1">{brushSize}</span>
+                        <button
+                          onClick={() => setBrushSize(Math.max(1, brushSize - 1))}
+                          className="p-1 rounded bg-gray-700 text-white border border-gray-500 hover:bg-gray-600 transition-colors"
+                        >
+                          <Minus size={12} />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* 구분선 */}
+                    <div className="h-px bg-gray-200"></div>
+
+                    {/* 색상 선택 */}
+                    <div className="flex flex-col items-center space-y-2">
+                      <span className="text-xs text-gray-600 font-medium">색상</span>
+                      {selectedTool !== 'mask' ? (
+                        <input
+                          type="color"
+                          value={brushColor}
+                          onChange={(e) => setBrushColor(e.target.value)}
+                          className="w-8 h-8 rounded border cursor-pointer border-gray-400"
+                          title="펜 색상"
+                        />
+                      ) : (
+                        <div className="flex flex-col items-center space-y-2">
+                          <input
+                            type="color"
+                            value={maskColor}
+                            onChange={(e) => setMaskColor(e.target.value)}
+                            className="w-8 h-8 rounded border cursor-pointer border-gray-400"
+                            title="마스킹 색상"
+                          />
+                          <div className="flex flex-col items-center">
+                            <span className="text-xs text-gray-600 mb-1">투명도</span>
+                            <input
+                              type="range"
+                              min="0.01"
+                              max="0.5"
+                              step="0.01"
+                              value={maskOpacity}
+                              onChange={(e) => setMaskOpacity(parseFloat(e.target.value))}
+                              className="w-16 h-1"
+                              title={`투명도: ${Math.round(maskOpacity * 100)}%`}
+                            />
+                            <span className="text-xs text-gray-500">{Math.round(maskOpacity * 100)}%</span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 구분선 */}
+                    <div className="h-px bg-gray-200"></div>
+
+                    {/* 액션 버튼들 */}
+                    <div className="flex flex-col space-y-2">
+                      {/* 클리어 버튼 */}
+                      <button
+                        onClick={clearOverlay}
+                        className="px-3 py-2 text-xs bg-red-100 text-red-600 rounded-lg hover:bg-red-200 transition-colors font-medium flex items-center justify-center"
+                        title="지우기"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+
+                      {/* Undo/Redo 버튼들 */}
+                      <div className="flex space-x-1">
+                        <button
+                          onClick={undo}
+                          disabled={historyStep < 0}
+                          className={`p-2 rounded-lg transition-all duration-200 ${
+                            historyStep <= 0 
+                              ? 'bg-gray-100 text-gray-400 cursor-not-allowed' 
+                              : 'bg-blue-100 text-blue-600 hover:bg-blue-200 hover:scale-105'
+                          }`}
+                          title="실행 취소 (Ctrl+Z)"
+                        >
+                          <Undo2 size={14} />
+                        </button>
+                        <button
+                          onClick={redo}
+                          disabled={historyStep >= canvasHistory.length - 1}
+                          className={`p-2 rounded-lg transition-all duration-200 ${
+                            historyStep >= canvasHistory.length - 1 
+                              ? 'bg-gray-100 text-gray-400 cursor-not-allowed' 
+                              : 'bg-green-100 text-green-600 hover:bg-green-200 hover:scale-105'
+                          }`}
+                          title="다시 실행 (Ctrl+Y)"
+                        >
+                          <Redo2 size={14} />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
               {/* PDF 캔버스 컨테이너 */}
               <div
                 className="absolute"
