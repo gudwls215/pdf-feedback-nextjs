@@ -27,15 +27,15 @@ const PDFFeedbackBoard: React.FC = () => {
   const [totalPages, setTotalPages] = useState(0);
   const [scale, setScale] = useState(1.5);
   const [loading, setLoading] = useState(false);
-  
+
   // 녹화 관련 상태
   const [recorder, setRecorder] = useState<RecorderType | null>(null);
   const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
   const [recordingTime, setRecordingTime] = useState(0);
-  const [recordedFiles, setRecordedFiles] = useState<{name: string, blob: Blob, timestamp: Date}[]>([]);
+  const [recordedFiles, setRecordedFiles] = useState<{ name: string, blob: Blob, timestamp: Date }[]>([]);
   const [showFileList, setShowFileList] = useState(false);
   const recordingIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  
+
   // 실시간 스트리밍 관련 상태
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamingTime, setStreamingTime] = useState(0);
@@ -44,7 +44,7 @@ const PDFFeedbackBoard: React.FC = () => {
   const [streamingUrl, setStreamingUrl] = useState('');
   const [connectionStatus, setConnectionStatus] = useState<'disconnected' | 'connecting' | 'connected' | 'failed'>('disconnected');
   const [viewerCount, setViewerCount] = useState(0);
-  const [chatMessages, setChatMessages] = useState<{id: string, sender: string, message: string, timestamp: Date, isStreamer: boolean}[]>([]);
+  const [chatMessages, setChatMessages] = useState<{ id: string, sender: string, message: string, timestamp: Date, isStreamer: boolean }[]>([]);
   const [chatInput, setChatInput] = useState('');
   const [showChat, setShowChat] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -53,19 +53,19 @@ const PDFFeedbackBoard: React.FC = () => {
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
   const streamIdRef = useRef<string>('');
   const chatEndRef = useRef<HTMLDivElement>(null);
-  
+
   // 뷰어 연결 대기 큐
   const pendingViewersRef = useRef<string[]>([]);
   const isStreamReadyRef = useRef<boolean>(false);
   const localStreamRef = useRef<MediaStream | null>(null); // 즉시 접근 가능한 스트림 ref
-  
+
   // WebRTC 설정
   const rtcConfiguration = {
     iceServers: [
       { urls: 'stun:stun.l.google.com:19302' }
     ]
   };
-  
+
   // 화이트보드 관련 상태
   const [selectedTool, setSelectedTool] = useState<'pointer' | 'pen' | 'text' | 'eraser' | 'mask'>('pointer');
   const [isDrawing, setIsDrawing] = useState(false);
@@ -76,13 +76,13 @@ const PDFFeedbackBoard: React.FC = () => {
   const [textInput, setTextInput] = useState('');
   const [textPosition, setTextPosition] = useState<{ x: number; y: number } | null>(null);
   const [showTextInput, setShowTextInput] = useState(false);
-  const [maskPath, setMaskPath] = useState<{x: number, y: number}[]>([]); // 마스킹 경로 저장
-  
+  const [maskPath, setMaskPath] = useState<{ x: number, y: number }[]>([]); // 마스킹 경로 저장
+
   // 드래그 관련 상태
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [canvasPosition, setCanvasPosition] = useState({ x: 210, y: 0 });
-  
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -153,11 +153,11 @@ const PDFFeedbackBoard: React.FC = () => {
     if (canvasRef.current && overlayCanvasRef.current) {
       const mainCanvas = canvasRef.current;
       const overlayCanvas = overlayCanvasRef.current;
-      
+
       // 오버레이 캔버스를 메인 캔버스와 동일한 크기로 설정
       overlayCanvas.width = mainCanvas.width;
       overlayCanvas.height = mainCanvas.height;
-      
+
       // CSS 스타일도 동일하게 설정
       const mainCanvasStyle = window.getComputedStyle(mainCanvas);
       overlayCanvas.style.width = mainCanvasStyle.width;
@@ -168,7 +168,7 @@ const PDFFeedbackBoard: React.FC = () => {
   // 줌 변경 함수
   const changeScale = async (newScale: number) => {
     if (!pdfDocument) return;
-    
+
     setScale(newScale);
     await renderPage(pdfDocument, currentPage, newScale);
     // 오버레이는 클리어하지 않고 크기만 조정
@@ -193,17 +193,17 @@ const PDFFeedbackBoard: React.FC = () => {
     setLoading(true);
     try {
       const arrayBuffer = await file.arrayBuffer();
-      
+
       // PDF.js 동적 임포트
       const pdfjsLib = await import('pdfjs-dist');
       const loadingTask = pdfjsLib.getDocument(arrayBuffer);
       const pdf = await loadingTask.promise;
-      
+
       setPdfDocument(pdf);
       setTotalPages(pdf.numPages);
       setCurrentPage(1);
       setPdfLoaded(true);
-      
+
       // useEffect에서 자동으로 렌더링됨
     } catch (error) {
       console.error('PDF 로드 실패:', error);
@@ -221,36 +221,36 @@ const PDFFeedbackBoard: React.FC = () => {
       console.log('Canvas not ready');
       return;
     }
-    
+
     try {
       console.log(`Rendering page ${pageNumber} with scale ${customScale || scale}`);
       const page = await pdf.getPage(pageNumber);
       const currentScale = customScale || scale;
       const viewport = page.getViewport({ scale: currentScale });
-      
+
       const canvas = canvasRef.current;
       const context = canvas.getContext('2d');
-      
+
       if (!context) {
         console.log('Canvas context not available');
         return;
       }
-      
+
       // 캔버스 크기 설정
       canvas.height = viewport.height;
       canvas.width = viewport.width;
-      
+
       // 캔버스 클리어
       context.clearRect(0, 0, canvas.width, canvas.height);
-      
+
       const renderContext = {
         canvasContext: context,
         viewport: viewport,
       };
-      
+
       await page.render(renderContext).promise;
       console.log(`Page ${pageNumber} rendered successfully`);
-      
+
       // 페이지 렌더링 후 오버레이 캔버스 크기 업데이트
       setupOverlayCanvas();
     } catch (error) {
@@ -262,33 +262,33 @@ const PDFFeedbackBoard: React.FC = () => {
   const handleMouseDown = (event: React.MouseEvent<HTMLCanvasElement>) => {
     const rect = overlayCanvasRef.current?.getBoundingClientRect();
     if (!rect) return;
-    
+
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
-    
+
     if (selectedTool === 'pointer') {
       // 포인터 도구일 때는 드래그 시작
       setIsDragging(true);
       setDragStart({ x: event.clientX - canvasPosition.x, y: event.clientY - canvasPosition.y });
       return;
     }
-    
+
     if (selectedTool === 'text') {
       setTextPosition({ x, y });
       setShowTextInput(true);
       setTimeout(() => textInputRef.current?.focus(), 100);
       return;
     }
-    
+
     setIsDrawing(true);
-    
+
     if (selectedTool === 'pen' || selectedTool === 'mask') {
       startDrawing(x, y);
     } else if (selectedTool === 'eraser') {
       startErasing(x, y);
     }
   };
-  
+
   const handleMouseMove = (event: React.MouseEvent<HTMLCanvasElement>) => {
     if (selectedTool === 'pointer' && isDragging) {
       // 포인터 도구로 드래그 중
@@ -297,31 +297,31 @@ const PDFFeedbackBoard: React.FC = () => {
       setCanvasPosition({ x: newX, y: newY });
       return;
     }
-    
+
     if (!isDrawing || selectedTool === 'pointer' || selectedTool === 'text') return;
-    
+
     const rect = overlayCanvasRef.current?.getBoundingClientRect();
     if (!rect) return;
-    
+
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
-    
+
     if (selectedTool === 'pen' || selectedTool === 'mask') {
       continueDrawing(x, y);
     } else if (selectedTool === 'eraser') {
       continueErasing(x, y);
     }
   };
-  
+
   const handleMouseUp = () => {
     setIsDrawing(false);
     setIsDragging(false);
-    
+
     // 마스킹 도구인 경우 최종 처리
     if (selectedTool === 'mask' && maskPath.length > 0) {
       finalizeMask();
     }
-    
+
     // 지우개 사용 후 composite operation 리셋하고 globalAlpha도 리셋
     const canvas = overlayCanvasRef.current;
     if (canvas) {
@@ -352,15 +352,15 @@ const PDFFeedbackBoard: React.FC = () => {
       changeScale(newScale);
     }
   };
-  
+
   // 그리기 함수들
   const startDrawing = (x: number, y: number) => {
     const canvas = overlayCanvasRef.current;
     if (!canvas) return;
-    
+
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    
+
     if (selectedTool === 'mask') {
       // 마스킹 도구: 경로 시작
       ctx.globalCompositeOperation = 'source-over';
@@ -379,14 +379,14 @@ const PDFFeedbackBoard: React.FC = () => {
       ctx.lineJoin = 'round';
     }
   };
-  
+
   const continueDrawing = (x: number, y: number) => {
     const canvas = overlayCanvasRef.current;
     if (!canvas) return;
-    
+
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    
+
     if (selectedTool === 'mask') {
       // 마스킹 도구: 경로에 점 추가하고 실시간 미리보기
       setMaskPath(prevPath => {
@@ -402,22 +402,22 @@ const PDFFeedbackBoard: React.FC = () => {
   };
 
   // 마스킹 미리보기 그리기
-  const drawMaskPreview = (path: {x: number, y: number}[]) => {
+  const drawMaskPreview = (path: { x: number, y: number }[]) => {
     const canvas = overlayCanvasRef.current;
     if (!canvas || path.length < 2) return;
-    
+
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    
+
     // 현재 캔버스 상태를 임시로 저장
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    
+
     // 캔버스 지우고 다시 그리기
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    
+
     // 기존 내용 복원 (마스킹 미리보기 제외)
     ctx.putImageData(imageData, 0, 0);
-    
+
     // 새 마스킹 경로 그리기
     ctx.save();
     ctx.globalCompositeOperation = 'source-over';
@@ -446,13 +446,13 @@ const PDFFeedbackBoard: React.FC = () => {
   // 마스킹 완료 처리
   const finalizeMask = () => {
     if (maskPath.length < 2) return;
-    
+
     const canvas = overlayCanvasRef.current;
     if (!canvas) return;
-    
+
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    
+
     // 최종 마스킹 그리기
     ctx.save();
     ctx.globalCompositeOperation = 'source-over';
@@ -477,66 +477,66 @@ const PDFFeedbackBoard: React.FC = () => {
     ctx.restore();
     setMaskPath([]);
   };
-  
+
   const startErasing = (x: number, y: number) => {
     const canvas = overlayCanvasRef.current;
     if (!canvas) return;
-    
+
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    
+
     ctx.globalCompositeOperation = 'destination-out';
     ctx.beginPath();
     ctx.arc(x, y, brushSize * 2, 0, Math.PI * 2);
     ctx.fill();
   };
-  
+
   const continueErasing = (x: number, y: number) => {
     const canvas = overlayCanvasRef.current;
     if (!canvas) return;
-    
+
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    
+
     ctx.globalCompositeOperation = 'destination-out';
     ctx.beginPath();
     ctx.arc(x, y, brushSize * 2, 0, Math.PI * 2);
     ctx.fill();
   };
-  
+
   // 텍스트 추가
   const addText = () => {
     if (!textInput.trim() || !textPosition || !overlayCanvasRef.current) return;
-    
+
     const canvas = overlayCanvasRef.current;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    
+
     ctx.globalCompositeOperation = 'source-over';
     ctx.globalAlpha = 1.0; // 텍스트는 불투명
     ctx.font = `${brushSize * 5}px Arial`;
     ctx.fillStyle = brushColor;
     ctx.fillText(textInput, textPosition.x, textPosition.y);
-    
+
     setTextInput('');
     setTextPosition(null);
     setShowTextInput(false);
   };
-  
+
   // 오버레이 클리어
   const clearOverlay = () => {
     const canvas = overlayCanvasRef.current;
     if (!canvas) return;
-    
+
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    
+
     ctx.clearRect(0, 0, canvas.width, canvas.height);
   };
 
   const goToPage = async (pageNumber: number) => {
     if (!pdfDocument || pageNumber < 1 || pageNumber > totalPages) return;
-    
+
     setCurrentPage(pageNumber);
     await renderPage(pdfDocument, pageNumber);
     // 페이지 변경 시 오버레이 클리어
@@ -546,28 +546,28 @@ const PDFFeedbackBoard: React.FC = () => {
   // 실시간 스트리밍 관련 함수들
   const connectToSignalingServer = () => {
     if (typeof window === 'undefined') return null;
-    
+
     // Socket.IO 동적 임포트
     import('socket.io-client').then((io) => {
       const signalingServerUrl = process.env.NEXT_PUBLIC_SIGNALING_SERVER_URL || '/api/signaling';
       const socket = io.default(signalingServerUrl, {
         transports: ['websocket', 'polling']
       });
-      
+
       socketRef.current = socket;
-      
+
       socket.on('connect', () => {
         console.log('🔴 스트리머: 시그널링 서버에 연결되었습니다');
       });
-      
+
       socket.on('stream-started', (data) => {
         console.log('🔴 스트리머: 스트림 시작됨:', data);
       });
-      
+
       socket.on('viewer-joined', (data) => {
         console.log('새 뷰어 참여:', data);
         setViewerCount(data.viewerCount);
-        
+
         // 스트림이 준비된 경우 즉시 연결 시도, 아니면 큐에 추가
         console.log('스트림 준비 상태:', isStreamReadyRef.current, '로컬 스트림 ref:', !!localStreamRef.current, '로컬 스트림 state:', !!localStream);
         if (isStreamReadyRef.current && localStreamRef.current) {
@@ -578,19 +578,19 @@ const PDFFeedbackBoard: React.FC = () => {
           pendingViewersRef.current.push(data.viewerId);
         }
       });
-      
+
       socket.on('viewer-left', (data) => {
         console.log('뷰어 나감:', data);
         setViewerCount(data.viewerCount);
       });
-      
+
       socket.on('chat-message', (data) => {
         console.log('🔴 스트리머: 채팅 메시지 수신:', {
           senderName: data.senderName,
           message: data.message,
           isStreamer: data.isStreamer
         });
-        
+
         const newMessage = {
           id: Date.now().toString() + Math.random().toString(36).substr(2),
           sender: data.senderName || '뷰어',
@@ -598,7 +598,7 @@ const PDFFeedbackBoard: React.FC = () => {
           timestamp: data.timestamp ? new Date(data.timestamp) : new Date(),
           isStreamer: data.isStreamer || false
         };
-        
+
         console.log('🔴 스트리머: 새 메시지 추가:', newMessage);
         setChatMessages(prev => {
           console.log('🔴 스트리머: 이전 메시지 개수:', prev.length);
@@ -606,13 +606,13 @@ const PDFFeedbackBoard: React.FC = () => {
           console.log('🔴 스트리머: 업데이트된 메시지 개수:', updated.length);
           return updated;
         });
-        
+
         // 채팅창이 닫혀있으면 읽지 않은 메시지 카운트 증가
         if (!showChat) {
           console.log('🔴 스트리머: 채팅창 닫힘, 읽지 않은 메시지 카운트 증가');
           setUnreadCount(prev => prev + 1);
         }
-        
+
         // 채팅창이 열려있으면 맨 아래로 스크롤
         if (showChat) {
           setTimeout(() => {
@@ -623,45 +623,45 @@ const PDFFeedbackBoard: React.FC = () => {
           }, 100);
         }
       });
-      
+
       socket.on('offer', async (data) => {
         console.log('Offer 수신:', data);
         await handleOffer(data);
       });
-      
+
       socket.on('answer', async (data) => {
         console.log('스트리머: Answer 수신:', data);
         await handleAnswer(data);
       });
-      
+
       socket.on('ice-candidate', async (data) => {
         console.log('ICE candidate 수신:', data);
         await handleIceCandidate(data);
       });
-      
+
       socket.on('stream-ended', () => {
         console.log('스트림 종료됨');
         stopStreaming();
       });
-      
+
       socket.on('disconnect', () => {
         console.log('시그널링 서버 연결 해제');
         setConnectionStatus('disconnected');
       });
     });
   };
-  
+
   const setupPeerConnection = async (viewerId: string) => {
     if (!localStream) return;
-    
+
     const peerConnection = new RTCPeerConnection(rtcConfiguration);
     peerConnectionRef.current = peerConnection;
-    
+
     // 로컬 스트림을 peer connection에 추가
     localStream.getTracks().forEach(track => {
       peerConnection.addTrack(track, localStream);
     });
-    
+
     // ICE candidate 이벤트
     peerConnection.onicecandidate = (event) => {
       if (event.candidate && socketRef.current) {
@@ -672,12 +672,12 @@ const PDFFeedbackBoard: React.FC = () => {
         });
       }
     };
-    
+
     // Offer 생성 및 전송
     try {
       const offer = await peerConnection.createOffer();
       await peerConnection.setLocalDescription(offer);
-      
+
       if (socketRef.current) {
         socketRef.current.emit('offer', {
           offer,
@@ -689,19 +689,19 @@ const PDFFeedbackBoard: React.FC = () => {
       console.error('Offer 생성 실패:', error);
     }
   };
-  
+
   const setupPeerConnectionForStreamer = async (viewerId: string) => {
     console.log('스트리머: 새 뷰어를 위한 Peer connection 설정 중...', viewerId);
-    
+
     // 로컬 스트림 확인 (ref 사용)
     const currentStream = localStreamRef.current;
     if (!currentStream || !isStreamReadyRef.current) {
-      console.error('로컬 스트림이 준비되지 않음:', { 
-        hasLocalStreamRef: !!currentStream, 
+      console.error('로컬 스트림이 준비되지 않음:', {
+        hasLocalStreamRef: !!currentStream,
         hasLocalStreamState: !!localStream,
-        isStreamReady: isStreamReadyRef.current 
+        isStreamReady: isStreamReadyRef.current
       });
-      
+
       // 뷰어를 대기 큐에 추가
       if (!pendingViewersRef.current.includes(viewerId)) {
         console.log('뷰어를 대기 큐에 추가:', viewerId);
@@ -709,18 +709,18 @@ const PDFFeedbackBoard: React.FC = () => {
       }
       return;
     }
-    
+
     try {
       const peerConnection = new RTCPeerConnection(rtcConfiguration);
-      
+
       console.log('로컬 스트림 트랙들:', currentStream.getTracks().map(t => `${t.kind}: ${t.id}`));
-      
+
       // 로컬 스트림을 peer connection에 추가
       currentStream.getTracks().forEach(track => {
         console.log('트랙 추가:', track.kind, track.id);
         peerConnection.addTrack(track, currentStream);
       });
-      
+
       // ICE candidate 이벤트
       peerConnection.onicecandidate = (event) => {
         if (event.candidate && socketRef.current) {
@@ -732,27 +732,27 @@ const PDFFeedbackBoard: React.FC = () => {
           });
         }
       };
-      
+
       // 연결 상태 변경
       peerConnection.onconnectionstatechange = () => {
         console.log('스트리머 연결 상태:', peerConnection.connectionState);
       };
-      
+
       // ICE 연결 상태 변경
       peerConnection.oniceconnectionstatechange = () => {
         console.log('스트리머 ICE 연결 상태:', peerConnection.iceConnectionState);
       };
-      
+
       // Offer 생성 및 전송
       console.log('Offer 생성 중...');
       const offer = await peerConnection.createOffer();
       await peerConnection.setLocalDescription(offer);
-      
+
       console.log('Offer 생성 완료:', {
         type: offer.type,
         sdp: offer.sdp?.substring(0, 100) + '...'
       });
-      
+
       if (socketRef.current) {
         socketRef.current.emit('offer', {
           offer,
@@ -763,15 +763,15 @@ const PDFFeedbackBoard: React.FC = () => {
       } else {
         console.error('Socket이 연결되지 않음');
       }
-      
+
       // 이 peer connection을 저장 (여러 뷰어 지원을 위해서는 Map을 사용해야 함)
       peerConnectionRef.current = peerConnection;
-      
+
     } catch (error) {
       console.error('스트리머: Peer connection 설정 실패:', error);
     }
   };
-  
+
   // 대기 중인 뷰어들 처리
   const processPendingViewers = () => {
     if (!isStreamReadyRef.current || !localStreamRef.current) {
@@ -782,23 +782,23 @@ const PDFFeedbackBoard: React.FC = () => {
       });
       return;
     }
-    
+
     const pendingViewers = [...pendingViewersRef.current];
     pendingViewersRef.current = []; // 큐 초기화
-    
+
     console.log('대기 중인 뷰어들 처리:', pendingViewers);
-    
+
     pendingViewers.forEach((viewerId) => {
       console.log('대기 중인 뷰어 연결 처리:', viewerId);
       setupPeerConnectionForStreamer(viewerId);
     });
   };
-  
+
   const handleOffer = async (data: any) => {
     // 이 함수는 뷰어 측에서 사용됩니다
     // 스트리머는 offer를 받지 않으므로 현재는 비어있습니다
   };
-  
+
   const handleAnswer = async (data: any) => {
     console.log('스트리머: Answer 처리 중...', data);
     if (peerConnectionRef.current) {
@@ -812,7 +812,7 @@ const PDFFeedbackBoard: React.FC = () => {
       console.error('스트리머: PeerConnection이 없습니다');
     }
   };
-  
+
   const handleIceCandidate = async (data: any) => {
     console.log('스트리머: ICE candidate 수신:', data);
     if (peerConnectionRef.current) {
@@ -831,7 +831,7 @@ const PDFFeedbackBoard: React.FC = () => {
     try {
       console.log('Starting live streaming...');
       setConnectionStatus('connecting');
-      
+
       // 화면 캡처 시작
       const displayStream = await navigator.mediaDevices.getDisplayMedia({
         video: {
@@ -859,24 +859,24 @@ const PDFFeedbackBoard: React.FC = () => {
 
       // 오디오 스트림 합성
       let finalStream = displayStream;
-      
+
       if (micStream && displayStream.getAudioTracks().length > 0) {
         // 화면 오디오와 마이크 오디오를 모두 합성
         const audioContext = new AudioContext();
         const destination = audioContext.createMediaStreamDestination();
-        
+
         // 화면 오디오 추가
         const displayAudioSource = audioContext.createMediaStreamSource(displayStream);
         displayAudioSource.connect(destination);
-        
+
         // 마이크 오디오 추가
         const micAudioSource = audioContext.createMediaStreamSource(micStream);
         micAudioSource.connect(destination);
-        
+
         // 새로운 스트림 생성 (비디오는 기존 것, 오디오는 합성된 것)
         const videoTrack = displayStream.getVideoTracks()[0];
         const combinedAudioTrack = destination.stream.getAudioTracks()[0];
-        
+
         finalStream = new MediaStream([videoTrack, combinedAudioTrack]);
         console.log('화면 오디오와 마이크 오디오를 합성했습니다');
       } else if (micStream) {
@@ -886,7 +886,7 @@ const PDFFeedbackBoard: React.FC = () => {
         finalStream = new MediaStream([videoTrack, micAudioTrack]);
         console.log('마이크 오디오만 추가했습니다');
       }
-      
+
 
       console.log('최종 스트림 트랙:', !!finalStream);
       // 스트림을 먼저 저장하고 준비 상태 표시 (state와 ref 모두 설정)
@@ -894,47 +894,47 @@ const PDFFeedbackBoard: React.FC = () => {
       localStreamRef.current = finalStream; // ref에도 즉시 저장
       isStreamReadyRef.current = true; // 스트림 준비 완료 표시
       console.log('로컬 스트림 설정 완료:', finalStream.getTracks().map(t => t.kind));
-      
+
       // 고유한 스트리밍 ID 생성
       const streamId = Date.now().toString(36) + Math.random().toString(36).substr(2);
       streamIdRef.current = streamId;
       const generatedUrl = `${window.location.origin}/stream/${streamId}`;
       setStreamingUrl(generatedUrl);
-      
+
       // 상태 업데이트
       setIsStreaming(true);
       setStreamingTime(0);
       setConnectionStatus('connected');
-      
+
       console.log('실시간 스트리밍이 시작되었습니다 (화면 + 마이크)');
       console.log('스트리밍 URL:', generatedUrl);
-      
+
       // 로컬 스트림이 준비된 후에 시그널링 서버에 연결
       connectToSignalingServer();
-      
+
       // 약간의 지연 후 스트림 시작 알림 및 대기 중인 뷰어 처리
       setTimeout(() => {
         if (socketRef.current) {
           console.log('🔴 스트리머: 시그널링 서버에 스트림 시작 알림 전송, streamId:', streamId);
           socketRef.current.emit('start-stream', { streamId });
-          
+
           // 대기 중인 뷰어들 처리
           processPendingViewers();
         } else {
           console.error('🔴 스트리머: 시그널링 서버가 아직 연결되지 않음');
         }
       }, 2000);
-      
+
       // 스트림 종료 이벤트 처리
       finalStream.getVideoTracks()[0].addEventListener('ended', () => {
         console.log('Video track ended, stopping streaming...');
         stopStreaming();
       });
-      
+
     } catch (error) {
       console.error('스트리밍 시작 실패:', error);
       setConnectionStatus('failed');
-      
+
       let errorMessage = '실시간 스트리밍을 시작할 수 없습니다.';
       if (error instanceof Error) {
         if (error.name === 'NotAllowedError') {
@@ -945,9 +945,9 @@ const PDFFeedbackBoard: React.FC = () => {
           errorMessage = '화면 공유 소스 또는 마이크를 찾을 수 없습니다.';
         }
       }
-      
+
       alert(errorMessage);
-      
+
       // 실패 시 상태 리셋
       setIsStreaming(false);
       setLocalStream(null);
@@ -958,20 +958,20 @@ const PDFFeedbackBoard: React.FC = () => {
 
   const stopStreaming = () => {
     console.log('Stopping streaming...');
-    
+
     // 시그널링 서버에 스트림 종료 알림
     if (socketRef.current && streamIdRef.current) {
       socketRef.current.emit('stop-stream', { streamId: streamIdRef.current });
       socketRef.current.disconnect();
       socketRef.current = null;
     }
-    
+
     // Peer connection 정리
     if (peerConnectionRef.current) {
       peerConnectionRef.current.close();
       peerConnectionRef.current = null;
     }
-    
+
     if (localStream) {
       // 모든 트랙 정지
       localStream.getTracks().forEach(track => {
@@ -982,22 +982,22 @@ const PDFFeedbackBoard: React.FC = () => {
           console.error('Error stopping track:', error);
         }
       });
-      
+
       setLocalStream(null);
     }
-    
+
     // 스트림 준비 상태와 대기 큐 초기화
     isStreamReadyRef.current = false;
     localStreamRef.current = null; // ref도 초기화
     pendingViewersRef.current = [];
-    
+
     setIsStreaming(false);
     setStreamingTime(0);
     setConnectionStatus('disconnected');
     setStreamingUrl('');
     setViewerCount(0);
     streamIdRef.current = '';
-    
+
     console.log('실시간 스트리밍이 종료되었습니다');
   };
 
@@ -1012,7 +1012,7 @@ const PDFFeedbackBoard: React.FC = () => {
   // URL 복사 함수
   const copyStreamingUrl = async () => {
     if (!streamingUrl) return;
-    
+
     try {
       await navigator.clipboard.writeText(streamingUrl);
       setShowToast(true);
@@ -1044,12 +1044,12 @@ const PDFFeedbackBoard: React.FC = () => {
       });
       return;
     }
-    
+
     console.log('🔴 스트리머: 채팅 메시지 전송 시작:', {
       message: chatInput,
       streamId: streamIdRef.current
     });
-    
+
     const message = {
       id: Date.now().toString() + Math.random().toString(36).substr(2),
       sender: '스트리머',
@@ -1057,7 +1057,7 @@ const PDFFeedbackBoard: React.FC = () => {
       timestamp: new Date(),
       isStreamer: true
     };
-    
+
     // 로컬에 메시지 추가
     console.log('🔴 스트리머: 로컬 메시지 추가:', message);
     setChatMessages(prev => {
@@ -1065,7 +1065,7 @@ const PDFFeedbackBoard: React.FC = () => {
       console.log('🔴 스트리머: 로컬 메시지 업데이트 완료, 총 개수:', updated.length);
       return updated;
     });
-    
+
     // 소켓을 통해 뷰어들에게 전송
     const socketData = {
       streamId: streamIdRef.current,
@@ -1073,12 +1073,12 @@ const PDFFeedbackBoard: React.FC = () => {
       message: chatInput,
       isStreamer: true
     };
-    
+
     console.log('🔴 스트리머: 소켓으로 메시지 전송:', socketData);
     socketRef.current.emit('chat-message', socketData);
-    
+
     setChatInput('');
-    
+
     // 채팅창 맨 아래로 스크롤
     setTimeout(() => {
       if (chatEndRef.current) {
@@ -1116,12 +1116,12 @@ const PDFFeedbackBoard: React.FC = () => {
       // 이전 recorder가 있으면 먼저 완전히 정리하고 분리
       if (recorder) {
         console.log('Cleaning up previous recorder before starting new recording...');
-        
+
         // 현재 recorder를 로컬 변수로 복사하여 완전히 분리
         const oldRecorder = recorder;
         setRecorder(null); // 즉시 상태를 null로 변경
         setRecordingTime(0);
-        
+
         // 이전 recorder를 별도로 정리 (비동기적으로)
         setTimeout(async () => {
           try {
@@ -1130,13 +1130,13 @@ const PDFFeedbackBoard: React.FC = () => {
             console.error('Old recorder cleanup failed:', cleanupError);
           }
         }, 100);
-        
+
         // 정리 작업이 완료될 때까지 충분히 대기
         await new Promise(resolve => setTimeout(resolve, 800));
       }
-      
+
       console.log('Starting completely new recording...');
-      
+
       // 화면 캡처 시작
       const displayStream = await navigator.mediaDevices.getDisplayMedia({
         video: {
@@ -1146,7 +1146,7 @@ const PDFFeedbackBoard: React.FC = () => {
         },
         audio: true // 시스템 오디오
       });
-      
+
 
       // 마이크 오디오 캡처 시작
       let micStream: MediaStream | null = null;
@@ -1165,24 +1165,24 @@ const PDFFeedbackBoard: React.FC = () => {
 
       // 오디오 스트림 합성
       let finalStream = displayStream;
-      
+
       if (micStream && displayStream.getAudioTracks().length > 0) {
         // 화면 오디오와 마이크 오디오를 모두 합성
         const audioContext = new AudioContext();
         const destination = audioContext.createMediaStreamDestination();
-        
+
         // 화면 오디오 추가
         const displayAudioSource = audioContext.createMediaStreamSource(displayStream);
         displayAudioSource.connect(destination);
-        
+
         // 마이크 오디오 추가
         const micAudioSource = audioContext.createMediaStreamSource(micStream);
         micAudioSource.connect(destination);
-        
+
         // 새로운 스트림 생성 (비디오는 기존 것, 오디오는 합성된 것)
         const videoTrack = displayStream.getVideoTracks()[0];
         const combinedAudioTrack = destination.stream.getAudioTracks()[0];
-        
+
         finalStream = new MediaStream([videoTrack, combinedAudioTrack]);
         console.log('화면 오디오와 마이크 오디오를 합성했습니다');
       } else if (micStream) {
@@ -1195,7 +1195,7 @@ const PDFFeedbackBoard: React.FC = () => {
 
       // 완전히 새로운 RecordRTC 인스턴스 생성
       console.log('Creating completely fresh RecordRTC instance...');
-      
+
       // RecordRTC 동적 임포트 (매번 새로 임포트)
       const RecordRTCModule = await import('recordrtc');
       const RecordRTC = RecordRTCModule.default;
@@ -1218,19 +1218,19 @@ const PDFFeedbackBoard: React.FC = () => {
       // 완전히 새로운 RecordRTC 객체 생성
       const recordRTC = new RecordRTC(finalStream, options);
       console.log('New RecordRTC instance created with fresh stream');
-      
+
       // 녹화 시작 전 유효성 재확인
       console.log('Validating new recorder before start...');
-      
+
       // 스트림 유효성 확인
       const videoTracks = finalStream.getVideoTracks();
       const audioTracks = finalStream.getAudioTracks();
       console.log('Video tracks:', videoTracks.length, 'Audio tracks:', audioTracks.length);
-      
+
       if (videoTracks.length === 0) {
         throw new Error('No video tracks available');
       }
-      
+
       // RecordRTC 내부 상태 초기화 확인
       try {
         const internalRecorder = recordRTC.getInternalRecorder?.();
@@ -1238,11 +1238,11 @@ const PDFFeedbackBoard: React.FC = () => {
       } catch (checkError) {
         console.log('Could not check internal recorder:', checkError);
       }
-      
+
       // 녹화 시작
       console.log('Starting fresh recording...');
       recordRTC.startRecording();
-      
+
       // 상태 확인 (안전하게)
       try {
         const state = recordRTC.getState ? recordRTC.getState() : 'unknown';
@@ -1250,14 +1250,14 @@ const PDFFeedbackBoard: React.FC = () => {
       } catch (stateError) {
         console.log('Could not get fresh recorder state:', stateError);
       }
-      
+
       // 새 recorder 설정 (이전 recorder는 이미 분리됨)
       setRecorder(recordRTC);
       setIsRecording(true);
       setRecordingTime(0);
-      
+
       console.log('새로운 화면 녹화가 시작되었습니다 (마이크 포함)');
-      
+
       // 스트림 종료 이벤트 처리 (사용자가 브라우저에서 공유 중지한 경우)
       videoTracks[0].addEventListener('ended', () => {
         console.log('Video track ended, stopping recording...');
@@ -1266,10 +1266,10 @@ const PDFFeedbackBoard: React.FC = () => {
         }
         stopRecording();
       });
-      
+
     } catch (error) {
       console.error('녹화 시작 실패:', error);
-      
+
       let errorMessage = '화면 녹화를 시작할 수 없습니다.';
       if (error instanceof Error) {
         if (error.name === 'NotAllowedError') {
@@ -1280,9 +1280,9 @@ const PDFFeedbackBoard: React.FC = () => {
           errorMessage = '화면 공유 소스 또는 마이크를 찾을 수 없습니다.';
         }
       }
-      
+
       alert(errorMessage);
-      
+
       // 실패 시 상태 리셋
       setIsRecording(false);
       setRecorder(null);
@@ -1295,34 +1295,34 @@ const PDFFeedbackBoard: React.FC = () => {
       console.log('No recorder to stop');
       return;
     }
-    
+
     console.log('Stopping recording...');
-    
+
     // 먼저 상태를 변경
     setIsRecording(false);
-    
+
     try {
       recorder.stopRecording(() => {
         console.log('Recording stopped successfully');
-        
+
         try {
           const blob = recorder.getBlob();
           console.log('Blob size:', blob ? blob.size : 'null');
-          
+
           if (blob && blob.size > 0) {
             setRecordedBlob(blob);
-            
+
             // 파일명 생성
             const timestamp = new Date();
             const fileName = `pdf-feedback-${timestamp.toISOString().slice(0, 19).replace(/:/g, '-')}.webm`;
-            
+
             // 녹화된 파일 목록에 추가
             setRecordedFiles(prev => [...prev, {
               name: fileName,
               blob: blob,
               timestamp: timestamp
             }]);
-            
+
             // 녹화 파일 자동 다운로드
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -1332,7 +1332,7 @@ const PDFFeedbackBoard: React.FC = () => {
             a.click();
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
-            
+
             console.log('녹화가 완료되었습니다. 파일:', fileName);
           } else {
             console.error('Recording blob is empty or null');
@@ -1342,31 +1342,31 @@ const PDFFeedbackBoard: React.FC = () => {
           console.error('Error processing blob:', blobError);
           alert('녹화 파일 처리 중 오류가 발생했습니다.');
         }
-        
+
         // 콜백 완료 후 recorder 정리
         cleanupRecorder();
       });
-      
+
       // 타임아웃을 설정하여 콜백이 실행되지 않을 경우 대비
       setTimeout(() => {
         if (recorder) {
           try {
             console.log('Timeout fallback: Checking for blob...');
             const blob = recorder.getBlob();
-            
+
             if (blob && blob.size > 0) {
               console.log('Timeout fallback: Processing blob, size:', blob.size);
               setRecordedBlob(blob);
-              
+
               const timestamp = new Date();
               const fileName = `pdf-feedback-${timestamp.toISOString().slice(0, 19).replace(/:/g, '-')}.webm`;
-              
+
               setRecordedFiles(prev => [...prev, {
                 name: fileName,
                 blob: blob,
                 timestamp: timestamp
               }]);
-              
+
               const url = URL.createObjectURL(blob);
               const a = document.createElement('a');
               a.href = url;
@@ -1375,7 +1375,7 @@ const PDFFeedbackBoard: React.FC = () => {
               a.click();
               document.body.removeChild(a);
               URL.revokeObjectURL(url);
-              
+
               console.log('녹화가 완료되었습니다 (타임아웃 처리). 파일:', fileName);
             } else {
               console.log('Timeout fallback: No valid blob available');
@@ -1383,15 +1383,15 @@ const PDFFeedbackBoard: React.FC = () => {
           } catch (timeoutError) {
             console.error('Timeout fallback error:', timeoutError);
           }
-          
+
           // 타임아웃에서도 정리
           cleanupRecorder();
         }
       }, 3000); // 3초 타임아웃
-      
+
     } catch (error) {
       console.error('Recording stop error:', error);
-      
+
       // 에러가 발생해도 기본적인 정리 작업은 수행
       try {
         const blob = recorder.getBlob();
@@ -1404,7 +1404,7 @@ const PDFFeedbackBoard: React.FC = () => {
       } catch (blobError) {
         console.error('Emergency blob save failed:', blobError);
       }
-      
+
       cleanupRecorder();
     }
   };
@@ -1415,9 +1415,9 @@ const PDFFeedbackBoard: React.FC = () => {
       console.log('No old recorder to cleanup');
       return;
     }
-    
+
     console.log('Cleaning up old recorder instance...');
-    
+
     try {
       // 1. 스트림 트랙 먼저 정지
       if (oldRecorder.getInternalRecorder && typeof oldRecorder.getInternalRecorder === 'function') {
@@ -1438,7 +1438,7 @@ const PDFFeedbackBoard: React.FC = () => {
           console.error('Error accessing old internal recorder:', internalError);
         }
       }
-      
+
       // 2. RecordRTC 객체 완전 파괴
       if (oldRecorder.destroy && typeof oldRecorder.destroy === 'function') {
         try {
@@ -1467,31 +1467,31 @@ const PDFFeedbackBoard: React.FC = () => {
           console.error('Error destroying old recorder:', destroyError);
         }
       }
-      
+
       // 3. 메모리 정리를 위한 약간의 대기
       await new Promise(resolve => setTimeout(resolve, 100));
-      
+
     } catch (error) {
       console.error('Old recorder cleanup failed:', error);
     }
-    
+
     console.log('Old recorder cleanup completed');
   };
 
   // Recorder 정리 함수 - 현재 인스턴스용 (간소화)
   const cleanupRecorder = () => {
     console.log('Cleaning up current recorder...');
-    
+
     // 현재 recorder 상태만 정리
     const currentRecorder = recorder;
     setRecorder(null);
     setRecordingTime(0);
-    
+
     if (currentRecorder) {
       // 비동기적으로 정리 (UI 블로킹 방지)
       setTimeout(() => cleanupOldRecorder(currentRecorder), 0);
     }
-    
+
     console.log('Current recorder state cleared');
   };
 
@@ -1504,7 +1504,7 @@ const PDFFeedbackBoard: React.FC = () => {
   };
 
   // 파일 다운로드 함수
-  const downloadFile = (file: {name: string, blob: Blob}) => {
+  const downloadFile = (file: { name: string, blob: Blob }) => {
     const url = URL.createObjectURL(file.blob);
     const a = document.createElement('a');
     a.href = url;
@@ -1524,18 +1524,18 @@ const PDFFeedbackBoard: React.FC = () => {
   useEffect(() => {
     return () => {
       console.log('Component unmounting...');
-      
+
       // 타이머 정리
       if (recordingIntervalRef.current) {
         clearInterval(recordingIntervalRef.current);
         recordingIntervalRef.current = null;
       }
-      
+
       if (streamingIntervalRef.current) {
         clearInterval(streamingIntervalRef.current);
         streamingIntervalRef.current = null;
       }
-      
+
       // recorder가 있으면 정리
       if (recorder) {
         console.log('Component unmounting, cleaning up recorder...');
@@ -1550,7 +1550,7 @@ const PDFFeedbackBoard: React.FC = () => {
               console.error('Error stopping recording during cleanup:', stopError);
             }
           }
-          
+
           // 정리 함수 호출
           cleanupRecorder();
         } catch (error) {
@@ -1560,7 +1560,7 @@ const PDFFeedbackBoard: React.FC = () => {
           setRecordingTime(0);
         }
       }
-      
+
       // 스트리밍이 있으면 정리
       if (localStreamRef.current) {
         console.log('Component unmounting, stopping streaming...');
@@ -1575,19 +1575,19 @@ const PDFFeedbackBoard: React.FC = () => {
         setLocalStream(null);
         setIsStreaming(false);
       }
-      
+
       // Socket 연결 정리
       if (socketRef.current) {
         socketRef.current.disconnect();
         socketRef.current = null;
       }
-      
+
       // Peer connection 정리
       if (peerConnectionRef.current) {
         peerConnectionRef.current.close();
         peerConnectionRef.current = null;
       }
-      
+
       // 스트림 준비 상태와 대기 큐 초기화
       isStreamReadyRef.current = false;
       pendingViewersRef.current = [];
@@ -1619,14 +1619,14 @@ const PDFFeedbackBoard: React.FC = () => {
             <Upload size={18} />
             <span>{loading ? '로딩 중...' : 'PDF 업로드'}</span>
           </button>
-          
+
           {pdfLoaded && (
             <>
               {/* <div className="text-sm text-gray-600">
                 <span>페이지 {currentPage} / {totalPages}</span>
                 <span className="ml-2">({Math.round(scale * 100)}%)</span>
               </div> */}
-              
+
               {/* 화이트보드 도구들 */}
               <div className="flex items-center space-x-2 border-l pl-4">
                 {[
@@ -1639,17 +1639,19 @@ const PDFFeedbackBoard: React.FC = () => {
                   <button
                     key={tool}
                     onClick={() => setSelectedTool(tool)}
-                    className={`p-2 rounded-lg transition-colors ${
-                      selectedTool === tool
+                    className={`p-2 rounded-lg transition-colors ${selectedTool === tool
                         ? 'bg-blue-100 text-blue-600 border border-blue-300'
                         : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                    }`}
+                      }`}
                     title={label}
                   >
                     <Icon size={16} />
                   </button>
                 ))}
-                
+
+                {/* 도구 버튼과 브러시 크기 조절 사이 여백 */}
+                <div className="w-4" />
+
                 {/* 브러시 크기 조절 */}
                 <div className="flex items-center space-x-1  pl-2">
                   <button
@@ -1666,20 +1668,26 @@ const PDFFeedbackBoard: React.FC = () => {
                     <Plus size={12} />
                   </button>
                 </div>
-                
-                {/* 색상 선택 */}
+
+
                 <div className="flex items-center space-x-2 ">
-                  <input
-                    type="color"
-                    value={brushColor}
-                    onChange={(e) => setBrushColor(e.target.value)}
-                    className="w-8 h-8 rounded border cursor-pointer border-gray-400"
-                    title="펜 색상"
-                  />
-                  
+
+                  {/* 색상 선택 */}
+                  {selectedTool != 'mask' && (
+                    <div className="flex items-center space-x-2 pl-2">
+                      <input
+                        type="color"
+                        value={brushColor}
+                        onChange={(e) => setBrushColor(e.target.value)}
+                        className="w-8 h-8 rounded border cursor-pointer border-gray-400"
+                        title="펜 색상"
+                      />
+                    </div>
+                  )}
+
                   {/* 마스킹 도구 선택 시 추가 컨트롤 */}
                   {selectedTool === 'mask' && (
-                    <div className="flex items-center space-x-2 border-l pl-2">
+                    <div className="flex items-center space-x-2 pl-2">
                       <input
                         type="color"
                         value={maskColor}
@@ -1704,7 +1712,7 @@ const PDFFeedbackBoard: React.FC = () => {
                     </div>
                   )}
                 </div>
-                
+
                 {/* 클리어 버튼 */}
                 <button
                   onClick={clearOverlay}
@@ -1721,11 +1729,10 @@ const PDFFeedbackBoard: React.FC = () => {
           <button
             onClick={toggleRecording}
             disabled={!pdfLoaded}
-            className={`flex items-center space-x-2 px-6 py-3 rounded-full shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-200 font-medium ${
-              isRecording
+            className={`flex items-center space-x-2 px-6 py-3 rounded-full shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-200 font-medium ${isRecording
                 ? 'bg-gradient-to-r from-red-500 to-red-600 text-white hover:from-red-600 hover:to-red-700'
                 : 'bg-gradient-to-r from-teal-400 to-sky-600 text-white hover:from-teal-500 hover:to-sky-700'
-            } disabled:bg-gray-400 disabled:cursor-not-allowed disabled:transform-none`}
+              } disabled:bg-gray-400 disabled:cursor-not-allowed disabled:transform-none`}
           >
             {isRecording ? <Square size={18} /> : <Play size={18} />}
             <span>{isRecording ? '녹화 중지' : '녹화 시작'}</span>
@@ -1735,11 +1742,10 @@ const PDFFeedbackBoard: React.FC = () => {
           <button
             onClick={toggleStreaming}
             disabled={!pdfLoaded}
-            className={`flex items-center space-x-2 px-6 py-3 rounded-full shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-200 font-medium ${
-              isStreaming
+            className={`flex items-center space-x-2 px-6 py-3 rounded-full shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-200 font-medium ${isStreaming
                 ? 'bg-gradient-to-r from-orange-400 to-orange-600 text-white hover:from-orange-500 hover:to-orange-700'
                 : 'bg-gradient-to-r from-blue-400 to-blue-600 text-white hover:from-blue-500 hover:to-blue-700'
-            } disabled:bg-gray-400 disabled:cursor-not-allowed disabled:transform-none`}
+              } disabled:bg-gray-400 disabled:cursor-not-allowed disabled:transform-none`}
           >
             {isStreaming ? <Square size={18} /> : <Share size={18} />}
             <span>{isStreaming ? '스트리밍 중지' : '실시간 공유'}</span>
@@ -1762,7 +1768,7 @@ const PDFFeedbackBoard: React.FC = () => {
                 className="relative flex items-center space-x-2 px-5 py-3 bg-gradient-to-r from-green-400 to-green-600 text-white rounded-full shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-200 font-medium hover:from-green-500 hover:to-green-700"
               >
                 <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
                 </svg>
                 <span>채팅</span>
                 {unreadCount > 0 && (
@@ -1785,7 +1791,7 @@ const PDFFeedbackBoard: React.FC = () => {
           )}
         </div>
       </div>
-      
+
       {/* 스트리밍 URL 공유 모달 */}
       {showStreamingModal && streamingUrl && (
         <div className="fixed inset-0 bg-white/60 backdrop-blur-sm flex items-center justify-center z-50 transition-all">
@@ -1802,20 +1808,19 @@ const PDFFeedbackBoard: React.FC = () => {
                 ✕
               </button>
             </div>
-            
+
             <div className="space-y-4">
               {/* 연결 상태 */}
               <div className="flex items-center space-x-2">
-                <div className={`w-3 h-3 rounded-full ${
-                  connectionStatus === 'connected' ? 'bg-green-500' : 
-                  connectionStatus === 'connecting' ? 'bg-yellow-500' : 
-                  connectionStatus === 'failed' ? 'bg-red-500' : 'bg-gray-400'
-                }`}></div>
+                <div className={`w-3 h-3 rounded-full ${connectionStatus === 'connected' ? 'bg-green-500' :
+                    connectionStatus === 'connecting' ? 'bg-yellow-500' :
+                      connectionStatus === 'failed' ? 'bg-red-500' : 'bg-gray-400'
+                  }`}></div>
                 <span className="text-sm text-gray-600">
                   상태: {
                     connectionStatus === 'connected' ? '연결됨' :
-                    connectionStatus === 'connecting' ? '연결 중...' :
-                    connectionStatus === 'failed' ? '연결 실패' : '연결되지 않음'
+                      connectionStatus === 'connecting' ? '연결 중...' :
+                        connectionStatus === 'failed' ? '연결 실패' : '연결되지 않음'
                   }
                 </span>
               </div>
@@ -1910,14 +1915,14 @@ const PDFFeedbackBoard: React.FC = () => {
               <X size={18} />
             </button>
           </div>
-          
+
           {/* 채팅 메시지 영역 */}
           <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-50">
             {/* 디버깅 정보 */}
             <div className="text-xs text-gray-400 text-center border-b pb-2">
               메시지 개수: {chatMessages.length} | 뷰어: {viewerCount}명 | 스트림: {streamIdRef.current}
             </div>
-            
+
             {chatMessages.length === 0 ? (
               <div className="text-center text-gray-500 mt-8">
                 <MessageCircle className="mx-auto mb-2 text-gray-400" size={48} />
@@ -1932,14 +1937,13 @@ const PDFFeedbackBoard: React.FC = () => {
                     className={`flex ${msg.isStreamer ? 'justify-end' : 'justify-start'}`}
                   >
                     <div
-                      className={`max-w-[80%] rounded-lg px-3 py-2 ${
-                        msg.isStreamer
+                      className={`max-w-[80%] rounded-lg px-3 py-2 ${msg.isStreamer
                           ? 'bg-blue-500 text-white rounded-br-none'
                           : 'bg-white text-gray-800 shadow-sm border rounded-bl-none'
-                      }`}
+                        }`}
                     >
                       <div className={`text-xs mb-1 ${msg.isStreamer ? 'text-blue-100' : 'text-gray-500'}`}>
-                        {msg.sender} • {msg.timestamp.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                        {msg.sender} • {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                       </div>
                       <div className="break-words">{msg.message}</div>
                     </div>
@@ -1949,7 +1953,7 @@ const PDFFeedbackBoard: React.FC = () => {
             )}
             <div ref={chatEndRef} />
           </div>
-          
+
           {/* 채팅 입력 영역 */}
           <div className="border-t border-gray-200 p-4 bg-white">
             <div className="flex space-x-2">
@@ -1990,7 +1994,7 @@ const PDFFeedbackBoard: React.FC = () => {
                 ✕
               </button>
             </div>
-            
+
             {recordedFiles.length === 0 ? (
               <p className="text-gray-500 text-center py-8">녹화된 파일이 없습니다.</p>
             ) : (
@@ -2024,7 +2028,7 @@ const PDFFeedbackBoard: React.FC = () => {
                 ))}
               </div>
             )}
-            
+
             <div className="mt-6 p-4 bg-blue-50 rounded-lg">
               <h4 className="font-medium text-blue-800 mb-2">💡 파일 위치 안내</h4>
               <div className="text-sm text-blue-700 space-y-1">
@@ -2050,17 +2054,17 @@ const PDFFeedbackBoard: React.FC = () => {
         ) : pdfLoaded ? (
           <>
             {/* 무한 스크롤 보드 */}
-            <div 
+            <div
               ref={boardRef}
               className="flex-1 overflow-auto bg-gray-50 relative"
-              style={{ 
-                cursor: selectedTool === 'pointer' && !isDragging ? 'grab' : 
-                       selectedTool === 'pointer' && isDragging ? 'grabbing' : 'default'
+              style={{
+                cursor: selectedTool === 'pointer' && !isDragging ? 'grab' :
+                  selectedTool === 'pointer' && isDragging ? 'grabbing' : 'default'
               }}
               onWheel={handleBoardWheel}
             >
               {/* PDF 캔버스 컨테이너 */}
-              <div 
+              <div
                 className="absolute"
                 style={{
                   left: `${canvasPosition.x + 100}px`,
@@ -2078,14 +2082,14 @@ const PDFFeedbackBoard: React.FC = () => {
                   <canvas
                     ref={overlayCanvasRef}
                     className="absolute top-0 left-0 rounded-lg"
-                    style={{ 
-                      width: 'auto', 
+                    style={{
+                      width: 'auto',
                       height: 'auto',
-                      cursor: selectedTool === 'pointer' ? (isDragging ? 'grabbing' : 'grab') : 
-                             selectedTool === 'pen' ? 'crosshair' :
-                             selectedTool === 'text' ? 'text' :
-                             selectedTool === 'mask' ? 'crosshair' :
-                             selectedTool === 'eraser' ? 'grab' : 'default'
+                      cursor: selectedTool === 'pointer' ? (isDragging ? 'grabbing' : 'grab') :
+                        selectedTool === 'pen' ? 'crosshair' :
+                          selectedTool === 'text' ? 'text' :
+                            selectedTool === 'mask' ? 'crosshair' :
+                              selectedTool === 'eraser' ? 'grab' : 'default'
                     }}
                     onMouseDown={handleMouseDown}
                     onMouseMove={handleMouseMove}
@@ -2093,7 +2097,7 @@ const PDFFeedbackBoard: React.FC = () => {
                     onMouseLeave={handleMouseUp}
                     onWheel={handleWheel}
                   />
-                  
+
                   {/* 텍스트 입력 */}
                   {showTextInput && textPosition && (
                     <div
@@ -2145,7 +2149,7 @@ const PDFFeedbackBoard: React.FC = () => {
                 </div>
               </div>
             </div>
-            
+
             {/* 하단 컨트롤 패널 */}
             <div className="p-3 bg-white border-t flex items-center justify-center space-x-6">
               {/* 페이지 네비게이션 */}
@@ -2159,7 +2163,7 @@ const PDFFeedbackBoard: React.FC = () => {
                     <ChevronLeft size={16} />
                     <span>이전</span>
                   </button>
-                  
+
                   <div className="flex items-center space-x-2">
                     <span className="text-sm text-gray-700">페이지</span>
                     <input
@@ -2177,7 +2181,7 @@ const PDFFeedbackBoard: React.FC = () => {
                     />
                     <span className="text-sm text-gray-700">/ {totalPages}</span>
                   </div>
-                  
+
                   <button
                     onClick={() => goToPage(currentPage + 1)}
                     disabled={currentPage >= totalPages}
@@ -2188,7 +2192,7 @@ const PDFFeedbackBoard: React.FC = () => {
                   </button>
                 </div>
               )}
-              
+
               {/* 줌 컨트롤 */}
               <div className="flex items-center space-x-2 bg-gray-50 rounded-lg px-3 py-2">
                 <button
@@ -2198,37 +2202,34 @@ const PDFFeedbackBoard: React.FC = () => {
                 >
                   -
                 </button>
-                
+
                 {/* 빠른 줌 버튼들 */}
                 <button
                   onClick={() => changeScale(0.5)}
-                  className={`px-2 py-1 text-xs rounded transition-colors ${
-                    Math.abs(scale - 0.5) < 0.1 ? 'bg-blue-100 text-blue-600' : 'bg-white text-gray-700 hover:bg-gray-100'
-                  }`}
+                  className={`px-2 py-1 text-xs rounded transition-colors ${Math.abs(scale - 0.5) < 0.1 ? 'bg-blue-100 text-blue-600' : 'bg-white text-gray-700 hover:bg-gray-100'
+                    }`}
                 >
                   50%
                 </button>
                 <button
                   onClick={() => changeScale(1.0)}
-                  className={`px-2 py-1 text-xs rounded transition-colors ${
-                    Math.abs(scale - 1.0) < 0.1 ? 'bg-blue-100 text-blue-600' : 'bg-white text-gray-700 hover:bg-gray-100'
-                  }`}
+                  className={`px-2 py-1 text-xs rounded transition-colors ${Math.abs(scale - 1.0) < 0.1 ? 'bg-blue-100 text-blue-600' : 'bg-white text-gray-700 hover:bg-gray-100'
+                    }`}
                 >
                   100%
                 </button>
                 <button
                   onClick={() => changeScale(1.5)}
-                  className={`px-2 py-1 text-xs rounded transition-colors ${
-                    Math.abs(scale - 1.5) < 0.1 ? 'bg-blue-100 text-blue-600' : 'bg-white text-gray-700 hover:bg-gray-100'
-                  }`}
+                  className={`px-2 py-1 text-xs rounded transition-colors ${Math.abs(scale - 1.5) < 0.1 ? 'bg-blue-100 text-blue-600' : 'bg-white text-gray-700 hover:bg-gray-100'
+                    }`}
                 >
                   150%
                 </button>
-                
+
                 <span className="text-sm text-gray-800 min-w-[50px] text-center font-mono">
                   {Math.round(scale * 100)}%
                 </span>
-                
+
                 <button
                   onClick={() => changeScale(Math.min(3, scale + 0.25))}
                   className="px-2 py-1 bg-white text-gray-700 rounded hover:bg-gray-100 transition-colors"
@@ -2245,7 +2246,7 @@ const PDFFeedbackBoard: React.FC = () => {
               >
                 중앙으로
               </button>
-              
+
               {/* 녹화 상태 표시 */}
               {isRecording && (
                 <div className="flex items-center space-x-2 px-3 py-2 bg-red-100 text-red-600 rounded-lg text-sm">
@@ -2253,7 +2254,7 @@ const PDFFeedbackBoard: React.FC = () => {
                   <span>녹화 중 ({Math.floor(recordingTime / 60)}:{(recordingTime % 60).toString().padStart(2, '0')})</span>
                 </div>
               )}
-              
+
               {/* 스트리밍 상태 표시 */}
               {isStreaming && (
                 <div className="flex items-center space-x-2 px-3 py-2 bg-purple-100 text-purple-600 rounded-lg text-sm">
@@ -2261,11 +2262,11 @@ const PDFFeedbackBoard: React.FC = () => {
                   <span>실시간 공유 중 ({Math.floor(streamingTime / 60)}:{(streamingTime % 60).toString().padStart(2, '0')})</span>
                 </div>
               )}
-              
+
               {/* 녹화된 파일이 있을 때 안내 */}
               {recordedBlob && !isRecording && !isStreaming && (
                 <div className="flex items-center space-x-2 px-3 py-2 bg-green-100 text-green-600 rounded-lg text-sm cursor-pointer"
-                     onClick={() => setShowFileList(true)}>
+                  onClick={() => setShowFileList(true)}>
                   <span>✓ 녹화 완료 - 다운로드 폴더에 저장됨 (클릭하여 파일 목록 보기)</span>
                 </div>
               )}
