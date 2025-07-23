@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Upload, Play, Square, ChevronLeft, ChevronRight, Pen, Type, Eraser, MousePointer, Minus, Plus, Share, Users, Copy, ExternalLink, MessageCircle, X, Send } from 'lucide-react';
+import { Upload, Play, Square, ChevronLeft, ChevronRight, Pen, Type, Eraser, MousePointer, Minus, Plus, Share, Users, Copy, ExternalLink, MessageCircle, X, Send, Undo2, Redo2 } from 'lucide-react';
 
 // 타입 정의
 type PDFDocumentProxy = {
@@ -78,6 +78,12 @@ const PDFFeedbackBoard: React.FC = () => {
   const [showTextInput, setShowTextInput] = useState(false);
   const [maskPath, setMaskPath] = useState<{ x: number, y: number }[]>([]); // 마스킹 경로 저장
 
+  // Undo/Redo 관련 상태
+  const [canvasHistory, setCanvasHistory] = useState<string[]>([]); // ImageData를 Base64로 저장
+  const [historyStep, setHistoryStep] = useState(-1); // 현재 히스토리 단계
+  const canUndoRef = useRef(false);
+  const canRedoRef = useRef(false);
+
   // 드래그 관련 상태
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
@@ -146,8 +152,39 @@ const PDFFeedbackBoard: React.FC = () => {
       renderPage(pdfDocument, currentPage, scale);
       // 오버레이 캔버스 크기도 설정
       setupOverlayCanvas();
+      // 초기 빈 캔버스 상태를 히스토리에 저장
+      setTimeout(() => saveCanvasState(), 100);
     }
   }, [pdfDocument, pdfLoaded]);
+
+  // 키보드 단축키 (Ctrl+Z, Ctrl+Y) 이벤트 리스너
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!pdfLoaded) return; // PDF가 로드되지 않았으면 무시
+
+      if (event.ctrlKey || event.metaKey) {
+        if (event.key === 'z' || event.key === 'Z') {
+          event.preventDefault();
+          if (event.shiftKey) {
+            // Ctrl+Shift+Z = Redo
+            redo();
+          } else {
+            // Ctrl+Z = Undo
+            undo();
+          }
+        } else if (event.key === 'y' || event.key === 'Y') {
+          event.preventDefault();
+          // Ctrl+Y = Redo
+          redo();
+        }
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [pdfLoaded, canvasHistory, historyStep]); // 의존성 추가
 
   const setupOverlayCanvas = () => {
     if (canvasRef.current && overlayCanvasRef.current) {
@@ -203,6 +240,9 @@ const PDFFeedbackBoard: React.FC = () => {
       setTotalPages(pdf.numPages);
       setCurrentPage(1);
       setPdfLoaded(true);
+
+      // 새 PDF 로딩 시 히스토리 초기화
+      clearHistory();
 
       // useEffect에서 자동으로 렌더링됨
     } catch (error) {
@@ -314,12 +354,19 @@ const PDFFeedbackBoard: React.FC = () => {
   };
 
   const handleMouseUp = () => {
+    const wasDrawing = isDrawing;
     setIsDrawing(false);
     setIsDragging(false);
 
     // 마스킹 도구인 경우 최종 처리
     if (selectedTool === 'mask' && maskPath.length > 0) {
       finalizeMask();
+    }
+
+    // 그리기나 지우기 작업이 완료되었을 때 히스토리 저장
+    if (wasDrawing && (selectedTool === 'pen' || selectedTool === 'eraser')) {
+      // 작업 완료 후 약간의 지연을 두고 히스토리 저장
+      setTimeout(() => saveCanvasState(), 10);
     }
 
     // 지우개 사용 후 composite operation 리셋하고 globalAlpha도 리셋
@@ -476,6 +523,9 @@ const PDFFeedbackBoard: React.FC = () => {
 
     ctx.restore();
     setMaskPath([]);
+    
+    // 마스킹 완료 후 히스토리 저장
+    setTimeout(() => saveCanvasState(), 10);
   };
 
   const startErasing = (x: number, y: number) => {
@@ -521,6 +571,9 @@ const PDFFeedbackBoard: React.FC = () => {
     setTextInput('');
     setTextPosition(null);
     setShowTextInput(false);
+    
+    // 텍스트 추가 후 히스토리 저장
+    setTimeout(() => saveCanvasState(), 10);
   };
 
   // 오버레이 클리어
@@ -532,6 +585,121 @@ const PDFFeedbackBoard: React.FC = () => {
     if (!ctx) return;
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    // 클리어 후 히스토리에 저장
+    saveCanvasState();
+  };
+
+  // 캔버스 상태를 히스토리에 저장
+  const saveCanvasState = () => {
+    const canvas = overlayCanvasRef.current;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    try {
+      // 현재 캔버스를 base64로 변환
+      const canvasData = canvas.toDataURL();
+      
+      // 현재 단계 이후의 히스토리 제거 (새로운 작업이 시작되면 redo 불가능)
+      const newHistory = canvasHistory.slice(0, historyStep + 1);
+      newHistory.push(canvasData);
+      
+      // 히스토리 크기 제한 (메모리 관리)
+      const maxHistorySize = 50;
+      if (newHistory.length > maxHistorySize) {
+        newHistory.shift(); // 가장 오래된 항목 제거
+      } else {
+        setHistoryStep(prev => prev + 1);
+      }
+      
+      setCanvasHistory(newHistory);
+      
+      // undo/redo 가능 여부 업데이트
+      canUndoRef.current = newHistory.length > 1;
+      canRedoRef.current = false; // 새로운 상태 저장 시 redo 불가능
+    } catch (error) {
+      console.error('Canvas state save failed:', error);
+    }
+  };
+
+  // Undo 실행
+  const undo = () => {
+    if (historyStep < 0 || canvasHistory.length === 0) return;
+    
+    const canvas = overlayCanvasRef.current;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    try {
+      const newStep = historyStep - 1;
+      const imageData = canvasHistory[newStep];
+      
+      // 캔버스를 지우고 이전 상태 복원
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      
+      if (imageData && imageData !== '') {
+        const img = new Image();
+        img.onload = () => {
+          ctx.drawImage(img, 0, 0);
+        };
+        img.src = imageData;
+      }
+      
+      setHistoryStep(newStep);
+      
+      // undo/redo 가능 여부 업데이트
+      canUndoRef.current = newStep > 0;
+      canRedoRef.current = newStep < canvasHistory.length - 1;
+    } catch (error) {
+      console.error('Undo failed:', error);
+    }
+  };
+
+  // Redo 실행
+  const redo = () => {
+    if (historyStep >= canvasHistory.length - 1) return;
+    
+    const canvas = overlayCanvasRef.current;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    try {
+      const newStep = historyStep + 1;
+      const imageData = canvasHistory[newStep];
+      
+      // 캔버스를 지우고 다음 상태 복원
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      
+      if (imageData && imageData !== '') {
+        const img = new Image();
+        img.onload = () => {
+          ctx.drawImage(img, 0, 0);
+        };
+        img.src = imageData;
+      }
+      
+      setHistoryStep(newStep);
+      
+      // undo/redo 가능 여부 업데이트
+      canUndoRef.current = newStep > 0;
+      canRedoRef.current = newStep < canvasHistory.length - 1;
+    } catch (error) {
+      console.error('Redo failed:', error);
+    }
+  };
+
+  // 히스토리 초기화 (새 PDF 로딩 시)
+  const clearHistory = () => {
+    setCanvasHistory([]);
+    setHistoryStep(-1);
+    canUndoRef.current = false;
+    canRedoRef.current = false;
   };
 
   const goToPage = async (pageNumber: number) => {
@@ -539,8 +707,9 @@ const PDFFeedbackBoard: React.FC = () => {
 
     setCurrentPage(pageNumber);
     await renderPage(pdfDocument, pageNumber);
-    // 페이지 변경 시 오버레이 클리어
+    // 페이지 변경 시 오버레이 클리어 및 히스토리 초기화
     clearOverlay();
+    clearHistory();
   };
 
   // 실시간 스트리밍 관련 함수들
@@ -1699,9 +1868,9 @@ const PDFFeedbackBoard: React.FC = () => {
                         <span className="text-xs text-gray-600 mb-1">투명도</span>
                         <input
                           type="range"
-                          min="0.05"
+                          min="0.01"
                           max="0.5"
-                          step="0.05"
+                          step="0.01"
                           value={maskOpacity}
                           onChange={(e) => setMaskOpacity(parseFloat(e.target.value))}
                           className="w-16 h-1"
@@ -1720,6 +1889,34 @@ const PDFFeedbackBoard: React.FC = () => {
                 >
                   지우기
                 </button>
+
+                {/* Undo/Redo 버튼들 */}
+                <div className="flex items-center space-x-1 border-l pl-2">
+                  <button
+                    onClick={undo}
+                    disabled={historyStep <= 0}
+                    className={`p-2 rounded-lg transition-colors ${
+                      historyStep <= 0 
+                        ? 'bg-gray-100 text-gray-400 cursor-not-allowed' 
+                        : 'bg-blue-100 text-blue-600 hover:bg-blue-200'
+                    }`}
+                    title="실행 취소 (Ctrl+Z)"
+                  >
+                    <Undo2 size={16} />
+                  </button>
+                  <button
+                    onClick={redo}
+                    disabled={historyStep >= canvasHistory.length - 1}
+                    className={`p-2 rounded-lg transition-colors ${
+                      historyStep >= canvasHistory.length - 1 
+                        ? 'bg-gray-100 text-gray-400 cursor-not-allowed' 
+                        : 'bg-green-100 text-green-600 hover:bg-green-200'
+                    }`}
+                    title="다시 실행 (Ctrl+Y)"
+                  >
+                    <Redo2 size={16} />
+                  </button>
+                </div>
               </div>
             </>
           )}
