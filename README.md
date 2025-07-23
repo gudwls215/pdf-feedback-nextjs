@@ -1,36 +1,52 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
-## Getting Started
+# PDF Feedback Board (Next.js)
 
-First, run the development server:
+PDF 논문에 직접 필기, 마스킹, 텍스트 추가, 녹화, 실시간 스트리밍, 채팅, 그리고 **화이트보드 도구의 Undo/Redo 기능**까지 지원하는 Next.js 기반 앱입니다.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
 
-Open [http://localhost:4000](http://localhost:4000) with your browser to see the result.
+## 주요 기능 요약
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- PDF 업로드, 페이지 이동, 무한 스크롤
+- 펜, 마스킹(형광펜), 텍스트, 지우개 등 화이트보드 도구
+- **Undo/Redo (실행 취소/다시 실행)**: 아이콘 버튼 및 Ctrl+Z / Ctrl+Y 단축키
+- 녹화(화면+오디오) 및 파일 다운로드
+- 실시간 화면 공유(WebRTC, 초저지연) 및 채팅
+- 스트리밍 URL 복사/공유, 뷰어 수 실시간 표시
+- 채팅, 파일 목록, 스트리밍 상태 안내
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+---
 
-## Learn More
+## 로컬 스트리밍 테스트 가이드
 
-To learn more about Next.js, take a look at the following resources:
+1. **시그널링 서버 실행**
+   ```bash
+   cd signaling-server
+   npm install && npm start
+   ```
+   - 서버가 4001번 포트에서 실행됨
+2. **Next.js 앱 실행**
+   ```bash
+   npm run dev
+   ```
+   - 기본 포트: 4000
+3. **테스트 방법**
+   - 스트리머: `http://localhost:4000`에서 PDF 업로드 후 "실시간 공유" 클릭
+   - 뷰어: 스트리밍 URL을 새 탭/다른 브라우저/다른 기기에서 접속
+   - 서로 다른 브라우저(Chrome/Firefox) 또는 기기에서 테스트 권장
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+### 체크리스트
+#### 스트리머
+- [ ] 화면/마이크 권한 허용
+- [ ] "연결됨" 상태 확인
+- [ ] 뷰어 수 증가 확인
+- [ ] WebRTC 연결 로그 확인
+#### 뷰어
+- [ ] "스트림에 연결 중..." 후 비디오 표시
+- [ ] 실시간 화면/오디오 확인
+- [ ] WebRTC 연결 로그 확인
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### 트러블슈팅 요약
+- 시그널링 서버/방화벽/브라우저 권한/네트워크 설정 확인
+- 콘솔 에러, STUN 서버 연결, WebRTC 지원 여부 확인
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+---
