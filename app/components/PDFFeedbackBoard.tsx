@@ -538,7 +538,7 @@ const PDFFeedbackBoard: React.FC = () => {
 
     ctx.restore();
     setMaskPath([]);
-    
+
     // 마스킹 완료 후 히스토리 저장
     setTimeout(() => saveCanvasState(), 10);
   };
@@ -586,7 +586,7 @@ const PDFFeedbackBoard: React.FC = () => {
     setTextInput('');
     setTextPosition(null);
     setShowTextInput(false);
-    
+
     // 텍스트 추가 후 히스토리 저장
     setTimeout(() => saveCanvasState(), 10);
   };
@@ -600,7 +600,7 @@ const PDFFeedbackBoard: React.FC = () => {
     if (!ctx) return;
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    
+
     // 클리어 후 히스토리에 저장
     saveCanvasState();
   };
@@ -616,11 +616,11 @@ const PDFFeedbackBoard: React.FC = () => {
     try {
       // 현재 캔버스를 base64로 변환
       const canvasData = canvas.toDataURL();
-      
+
       // 현재 단계 이후의 히스토리 제거 (새로운 작업이 시작되면 redo 불가능)
       const newHistory = canvasHistory.slice(0, historyStep + 1);
       newHistory.push(canvasData);
-      
+
       // 히스토리 크기 제한 (메모리 관리)
       const maxHistorySize = 50;
       if (newHistory.length > maxHistorySize) {
@@ -628,9 +628,9 @@ const PDFFeedbackBoard: React.FC = () => {
       } else {
         setHistoryStep(prev => prev + 1);
       }
-      
+
       setCanvasHistory(newHistory);
-      
+
       // undo/redo 가능 여부 업데이트
       canUndoRef.current = newHistory.length > 1;
       canRedoRef.current = false; // 새로운 상태 저장 시 redo 불가능
@@ -642,7 +642,7 @@ const PDFFeedbackBoard: React.FC = () => {
   // Undo 실행
   const undo = () => {
     if (historyStep < 0 || canvasHistory.length === 0) return;
-    
+
     const canvas = overlayCanvasRef.current;
     if (!canvas) return;
 
@@ -652,10 +652,10 @@ const PDFFeedbackBoard: React.FC = () => {
     try {
       const newStep = historyStep - 1;
       const imageData = canvasHistory[newStep];
-      
+
       // 캔버스를 지우고 이전 상태 복원
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      
+
       if (imageData && imageData !== '') {
         const img = new Image();
         img.onload = () => {
@@ -663,9 +663,9 @@ const PDFFeedbackBoard: React.FC = () => {
         };
         img.src = imageData;
       }
-      
+
       setHistoryStep(newStep);
-      
+
       // undo/redo 가능 여부 업데이트
       canUndoRef.current = newStep > 0;
       canRedoRef.current = newStep < canvasHistory.length - 1;
@@ -677,7 +677,7 @@ const PDFFeedbackBoard: React.FC = () => {
   // Redo 실행
   const redo = () => {
     if (historyStep >= canvasHistory.length - 1) return;
-    
+
     const canvas = overlayCanvasRef.current;
     if (!canvas) return;
 
@@ -687,10 +687,10 @@ const PDFFeedbackBoard: React.FC = () => {
     try {
       const newStep = historyStep + 1;
       const imageData = canvasHistory[newStep];
-      
+
       // 캔버스를 지우고 다음 상태 복원
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      
+
       if (imageData && imageData !== '') {
         const img = new Image();
         img.onload = () => {
@@ -698,9 +698,9 @@ const PDFFeedbackBoard: React.FC = () => {
         };
         img.src = imageData;
       }
-      
+
       setHistoryStep(newStep);
-      
+
       // undo/redo 가능 여부 업데이트
       canUndoRef.current = newStep > 0;
       canRedoRef.current = newStep < canvasHistory.length - 1;
@@ -1016,24 +1016,26 @@ const PDFFeedbackBoard: React.FC = () => {
       console.log('Starting live streaming...');
       setConnectionStatus('connecting');
 
-      // 화면 캡처 시작
+      // 화면 캡처 시작 - 최고 화질 설정 (스트리밍용)
       const displayStream = await navigator.mediaDevices.getDisplayMedia({
         video: {
           width: { ideal: 1920 },
           height: { ideal: 1080 },
-          frameRate: { ideal: 30 }
+          frameRate: { ideal: 60, max: 60 },  // 최대 60fps
         },
         audio: true // 시스템 오디오
       });
 
-      // 마이크 오디오 캡처 시작
+      // 마이크 오디오 캡처 시작 (스트리밍용 고품질 설정)
       let micStream: MediaStream | null = null;
       try {
         micStream = await navigator.mediaDevices.getUserMedia({
           audio: {
             echoCancellation: true,
             noiseSuppression: true,
-            autoGainControl: true
+            autoGainControl: true,
+            sampleRate: 48000,        // 48kHz 고품질 샘플링
+            channelCount: 2           // 스테레오
           }
         });
         console.log('마이크 오디오 캡처 성공');
@@ -1321,25 +1323,27 @@ const PDFFeedbackBoard: React.FC = () => {
 
       console.log('Starting completely new recording...');
 
-      // 화면 캡처 시작
+      // 화면 캡처 시작 - 최고 화질 설정 (녹화용)
       const displayStream = await navigator.mediaDevices.getDisplayMedia({
         video: {
           width: { ideal: 1920 },
           height: { ideal: 1080 },
-          frameRate: { ideal: 30 }
+          frameRate: { ideal: 60, max: 60 },  // 최대 60fps
         },
         audio: true // 시스템 오디오
       });
 
 
-      // 마이크 오디오 캡처 시작
+      // 마이크 오디오 캡처 시작 (녹화용 고품질 설정)
       let micStream: MediaStream | null = null;
       try {
         micStream = await navigator.mediaDevices.getUserMedia({
           audio: {
             echoCancellation: true,
             noiseSuppression: true,
-            autoGainControl: true
+            autoGainControl: true,
+            sampleRate: 48000,        // 48kHz 고품질 샘플링
+            channelCount: 2           // 스테레오
           }
         });
         console.log('마이크 오디오 캡처 성공');
@@ -1384,19 +1388,19 @@ const PDFFeedbackBoard: React.FC = () => {
       const RecordRTCModule = await import('recordrtc');
       const RecordRTC = RecordRTCModule.default;
 
-      // RecordRTC 설정 - 새로운 인스턴스용 최적화된 설정
+      // RecordRTC 설정 - 최고 화질용 최적화된 설정
       const options = {
         type: 'video' as const,
         mimeType: 'video/webm;codecs=vp9' as const,
-        bitsPerSecond: 4000000,
-        videoBitsPerSecond: 3000000,
-        audioBitsPerSecond: 128000,
+        bitsPerSecond: 8000000,    // 8Mbps - 4K용 증가
+        videoBitsPerSecond: 6000000, // 6Mbps - 4K 비디오용 증가
+        audioBitsPerSecond: 256000,   // 256kbps - 고품질 오디오
         timeSlice: 1000, // 1초마다 데이터 수집
         checkForInactiveTracks: true,
         bufferSize: 16384 as const,
         // 새 인스턴스 보장을 위한 추가 옵션들
         numberOfAudioChannels: 2 as const,
-        desiredSampRate: 44100
+        desiredSampRate: 48000        // 48kHz - 프로급 오디오 샘플링
       };
 
       // 완전히 새로운 RecordRTC 객체 생성
@@ -1817,8 +1821,8 @@ const PDFFeedbackBoard: React.FC = () => {
             onClick={toggleRecording}
             disabled={!pdfLoaded}
             className={`flex items-center space-x-2 px-6 py-3 rounded-full shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-200 font-medium ${isRecording
-                ? 'bg-gradient-to-r from-red-500 to-red-600 text-white hover:from-red-600 hover:to-red-700'
-                : 'bg-gradient-to-r from-teal-400 to-sky-600 text-white hover:from-teal-500 hover:to-sky-700'
+              ? 'bg-gradient-to-r from-red-500 to-red-600 text-white hover:from-red-600 hover:to-red-700'
+              : 'bg-gradient-to-r from-teal-400 to-sky-600 text-white hover:from-teal-500 hover:to-sky-700'
               } disabled:bg-gray-400 disabled:cursor-not-allowed disabled:transform-none`}
           >
             {isRecording ? <Square size={18} /> : <Play size={18} />}
@@ -1830,8 +1834,8 @@ const PDFFeedbackBoard: React.FC = () => {
             onClick={toggleStreaming}
             disabled={!pdfLoaded}
             className={`flex items-center space-x-2 px-6 py-3 rounded-full shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-200 font-medium ${isStreaming
-                ? 'bg-gradient-to-r from-orange-400 to-orange-600 text-white hover:from-orange-500 hover:to-orange-700'
-                : 'bg-gradient-to-r from-blue-400 to-blue-600 text-white hover:from-blue-500 hover:to-blue-700'
+              ? 'bg-gradient-to-r from-orange-400 to-orange-600 text-white hover:from-orange-500 hover:to-orange-700'
+              : 'bg-gradient-to-r from-blue-400 to-blue-600 text-white hover:from-blue-500 hover:to-blue-700'
               } disabled:bg-gray-400 disabled:cursor-not-allowed disabled:transform-none`}
           >
             {isStreaming ? <Square size={18} /> : <Share size={18} />}
@@ -1900,8 +1904,8 @@ const PDFFeedbackBoard: React.FC = () => {
               {/* 연결 상태 */}
               <div className="flex items-center space-x-2">
                 <div className={`w-3 h-3 rounded-full ${connectionStatus === 'connected' ? 'bg-green-500' :
-                    connectionStatus === 'connecting' ? 'bg-yellow-500' :
-                      connectionStatus === 'failed' ? 'bg-red-500' : 'bg-gray-400'
+                  connectionStatus === 'connecting' ? 'bg-yellow-500' :
+                    connectionStatus === 'failed' ? 'bg-red-500' : 'bg-gray-400'
                   }`}></div>
                 <span className="text-sm text-gray-600">
                   상태: {
@@ -2025,8 +2029,8 @@ const PDFFeedbackBoard: React.FC = () => {
                   >
                     <div
                       className={`max-w-[80%] rounded-lg px-3 py-2 ${msg.isStreamer
-                          ? 'bg-blue-500 text-white rounded-br-none'
-                          : 'bg-white text-gray-800 shadow-sm border rounded-bl-none'
+                        ? 'bg-blue-500 text-white rounded-br-none'
+                        : 'bg-white text-gray-800 shadow-sm border rounded-bl-none'
                         }`}
                     >
                       <div className={`text-xs mb-1 ${msg.isStreamer ? 'text-blue-100' : 'text-gray-500'}`}>
@@ -2175,8 +2179,8 @@ const PDFFeedbackBoard: React.FC = () => {
                           key={tool}
                           onClick={() => setSelectedTool(tool)}
                           className={`w-9 h-9 flex items-center justify-center rounded-full transition-all duration-200 ${selectedTool === tool
-                              ? 'bg-blue-500 text-white shadow-md scale-105'
-                              : 'bg-gray-100 text-gray-600 hover:bg-gray-200 hover:scale-105'
+                            ? 'bg-blue-500 text-white shadow-md scale-105'
+                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200 hover:scale-105'
                             }`}
                           title={label}
                         >
@@ -2268,11 +2272,10 @@ const PDFFeedbackBoard: React.FC = () => {
                         <button
                           onClick={undo}
                           disabled={historyStep < 0}
-                          className={`p-2 rounded-lg transition-all duration-200 ${
-                            historyStep <= 0 
-                              ? 'bg-gray-100 text-gray-400 cursor-not-allowed' 
+                          className={`p-2 rounded-lg transition-all duration-200 ${historyStep <= 0
+                              ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
                               : 'bg-blue-100 text-blue-600 hover:bg-blue-200 hover:scale-105'
-                          }`}
+                            }`}
                           title="실행 취소 (Ctrl+Z)"
                         >
                           <Undo2 size={14} />
@@ -2280,11 +2283,10 @@ const PDFFeedbackBoard: React.FC = () => {
                         <button
                           onClick={redo}
                           disabled={historyStep >= canvasHistory.length - 1}
-                          className={`p-2 rounded-lg transition-all duration-200 ${
-                            historyStep >= canvasHistory.length - 1 
-                              ? 'bg-gray-100 text-gray-400 cursor-not-allowed' 
+                          className={`p-2 rounded-lg transition-all duration-200 ${historyStep >= canvasHistory.length - 1
+                              ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
                               : 'bg-green-100 text-green-600 hover:bg-green-200 hover:scale-105'
-                          }`}
+                            }`}
                           title="다시 실행 (Ctrl+Y)"
                         >
                           <Redo2 size={14} />

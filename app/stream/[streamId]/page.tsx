@@ -28,10 +28,13 @@ const StreamViewer: React.FC = () => {
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   // WebRTC 설정
-  const rtcConfiguration = {
+  const rtcConfiguration: RTCConfiguration = {
     iceServers: [
       { urls: 'stun:stun.l.google.com:19302' }
-    ]
+    ],
+    // 더 높은 품질을 위한 추가 설정
+    bundlePolicy: 'max-bundle' as RTCBundlePolicy,
+    rtcpMuxPolicy: 'require' as RTCRtcpMuxPolicy
   };
 
   // 연결 시간 타이머
@@ -548,8 +551,19 @@ const StreamViewer: React.FC = () => {
               playsInline
               muted={isMuted}
               controls={false}
+              style={{
+                imageRendering: 'crisp-edges', // 픽셀 선명도 향상
+                filter: 'contrast(1.05) brightness(1.02)', // 약간의 대비/밝기 개선
+              }}
               onLoadStart={() => console.log('비디오 로드 시작 (onLoadStart)')}
-              onLoadedData={() => console.log('비디오 데이터 로드됨 (onLoadedData)')}
+              onLoadedData={() => {
+                console.log('비디오 데이터 로드됨 (onLoadedData)');
+                // 비디오 로드 시 최고 품질로 설정
+                if (videoRef.current) {
+                  videoRef.current.style.imageRendering = 'auto';
+                  videoRef.current.style.transform = 'translateZ(0)'; // GPU 가속
+                }
+              }}
               onCanPlay={() => console.log('비디오 재생 가능 (onCanPlay)')}
               onPlay={() => console.log('비디오 재생 시작 (onPlay)')}
               onPlaying={() => console.log('비디오 재생 중 (onPlaying)')}
