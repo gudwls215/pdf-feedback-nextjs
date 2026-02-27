@@ -50,7 +50,8 @@ const PDFFeedbackBoard: React.FC = () => {
   const [unreadCount, setUnreadCount] = useState(0);
   const streamingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const socketRef = useRef<any>(null);
-  const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
+  const peerConnectionsRef = useRef<Map<string, RTCPeerConnection>>(new Map()); // 뷰어별 PeerConnection 관리
+  const peerConnectionRef = useRef<RTCPeerConnection | null>(null); // 하위 호환용
   const streamIdRef = useRef<string>('');
   const chatEndRef = useRef<HTMLDivElement>(null);
 
@@ -59,11 +60,36 @@ const PDFFeedbackBoard: React.FC = () => {
   const isStreamReadyRef = useRef<boolean>(false);
   const localStreamRef = useRef<MediaStream | null>(null); // 즉시 접근 가능한 스트림 ref
 
-  // WebRTC 설정
-  const rtcConfiguration = {
+  // WebRTC 설정 - TURN 서버 (자체 coturn + 공용 TURN 폴백)
+  const turnUrl = process.env.NEXT_PUBLIC_TURN_SERVER_URL || '';
+  const turnUser = process.env.NEXT_PUBLIC_TURN_USERNAME || '';
+  const turnCred = process.env.NEXT_PUBLIC_TURN_CREDENTIAL || '';
+
+  const rtcConfiguration: RTCConfiguration = {
     iceServers: [
-      { urls: 'stun:stun.l.google.com:19302' }
-    ]
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      // 자체 TURN 서버 (UDP + TCP)
+      ...(turnUrl ? [
+        { urls: turnUrl, username: turnUser, credential: turnCred },
+        { urls: turnUrl.replace(':3478', ':3478?transport=tcp'), username: turnUser, credential: turnCred },
+      ] : []),
+      // 공용 TURN 서버 폴백 (자체 TURN 서버 연결 실패 시 사용)
+      {
+        urls: [
+          'turn:openrelay.metered.ca:80',
+          'turn:openrelay.metered.ca:80?transport=tcp',
+          'turn:openrelay.metered.ca:443',
+          'turn:openrelay.metered.ca:443?transport=tcp',
+        ],
+        username: 'openrelayproject',
+        credential: 'openrelayproject',
+      },
+    ],
+    bundlePolicy: 'max-bundle' as RTCBundlePolicy,
+    rtcpMuxPolicy: 'require' as RTCRtcpMuxPolicy,
+    iceTransportPolicy: 'all' as RTCIceTransportPolicy,
+    iceCandidatePoolSize: 1,
   };
 
   // 화이트보드 관련 상태
@@ -846,14 +872,24 @@ const PDFFeedbackBoard: React.FC = () => {
       peerConnection.addTrack(track, localStream);
     });
 
-    // ICE candidate 이벤트
+    // ICE candidate 이벤트 - 상세 로깅 포함
+    const candidateStats = { host: 0, srflx: 0, relay: 0, prflx: 0 };
     peerConnection.onicecandidate = (event) => {
       if (event.candidate && socketRef.current) {
+        const c = event.candidate;
+        const cType = c.type || 'unknown';
+        if (cType in candidateStats) candidateStats[cType as keyof typeof candidateStats]++;
+        console.log(`스트리머: ICE candidate [${cType}] ${c.protocol} ${c.address}:${c.port}`);
         socketRef.current.emit('ice-candidate', {
           candidate: event.candidate,
           targetSocketId: viewerId,
           streamId: streamIdRef.current
         });
+      } else if (!event.candidate) {
+        console.log('스트리머: ICE gathering 완료. 후보 통계:', JSON.stringify(candidateStats));
+        if (candidateStats.relay === 0) {
+          console.warn('⚠️ 스트리머: relay(TURN) 후보가 0개! TURN 서버 접근 불가.');
+        }
       }
     };
 
@@ -905,15 +941,24 @@ const PDFFeedbackBoard: React.FC = () => {
         peerConnection.addTrack(track, currentStream);
       });
 
-      // ICE candidate 이벤트
+      // ICE candidate 이벤트 - 상세 로깅 포함
+      const candidateStats2 = { host: 0, srflx: 0, relay: 0, prflx: 0 };
       peerConnection.onicecandidate = (event) => {
         if (event.candidate && socketRef.current) {
-          console.log('스트리머: ICE candidate 전송:', event.candidate.candidate);
+          const c = event.candidate;
+          const cType = c.type || 'unknown';
+          if (cType in candidateStats2) candidateStats2[cType as keyof typeof candidateStats2]++;
+          console.log(`스트리머: ICE candidate [${cType}] ${c.protocol} ${c.address}:${c.port}`);
           socketRef.current.emit('ice-candidate', {
             candidate: event.candidate,
             targetSocketId: viewerId,
             streamId: streamIdRef.current
           });
+        } else if (!event.candidate) {
+          console.log('스트리머: ICE gathering 완료 (setupPeerConnectionForStreamer). 후보 통계:', JSON.stringify(candidateStats2));
+          if (candidateStats2.relay === 0) {
+            console.warn('⚠️ 스트리머: relay(TURN) 후보가 0개! TURN 서버 접근 불가.');
+          }
         }
       };
 
@@ -948,8 +993,9 @@ const PDFFeedbackBoard: React.FC = () => {
         console.error('Socket이 연결되지 않음');
       }
 
-      // 이 peer connection을 저장 (여러 뷰어 지원을 위해서는 Map을 사용해야 함)
-      peerConnectionRef.current = peerConnection;
+      // 뷰어별 PeerConnection을 Map에 저장
+      peerConnectionsRef.current.set(viewerId, peerConnection);
+      peerConnectionRef.current = peerConnection; // 하위 호환
 
     } catch (error) {
       console.error('스트리머: Peer connection 설정 실패:', error);
@@ -985,29 +1031,37 @@ const PDFFeedbackBoard: React.FC = () => {
 
   const handleAnswer = async (data: any) => {
     console.log('스트리머: Answer 처리 중...', data);
-    if (peerConnectionRef.current) {
+    // 해당 뷰어의 PeerConnection을 찾아서 Answer 적용
+    const viewerPc = peerConnectionsRef.current.get(data.fromSocketId);
+    const targetPc = viewerPc || peerConnectionRef.current;
+    
+    if (targetPc) {
       try {
-        await peerConnectionRef.current.setRemoteDescription(data.answer);
-        console.log('스트리머: Answer 처리 완료 - WebRTC 연결 설정됨');
+        await targetPc.setRemoteDescription(data.answer);
+        console.log('스트리머: Answer 처리 완료 - WebRTC 연결 설정됨, viewer:', data.fromSocketId);
       } catch (error) {
         console.error('스트리머: Answer 처리 실패:', error);
       }
     } else {
-      console.error('스트리머: PeerConnection이 없습니다');
+      console.error('스트리머: PeerConnection이 없습니다, viewer:', data.fromSocketId);
     }
   };
 
   const handleIceCandidate = async (data: any) => {
     console.log('스트리머: ICE candidate 수신:', data);
-    if (peerConnectionRef.current) {
+    // 해당 뷰어의 PeerConnection을 찾아서 ICE candidate 적용
+    const viewerPc = peerConnectionsRef.current.get(data.fromSocketId);
+    const targetPc = viewerPc || peerConnectionRef.current;
+    
+    if (targetPc) {
       try {
-        await peerConnectionRef.current.addIceCandidate(data.candidate);
-        console.log('스트리머: ICE candidate 추가 완료');
+        await targetPc.addIceCandidate(data.candidate);
+        console.log('스트리머: ICE candidate 추가 완료, viewer:', data.fromSocketId);
       } catch (error) {
         console.error('스트리머: ICE candidate 추가 실패:', error);
       }
     } else {
-      console.error('스트리머: PeerConnection이 없습니다');
+      console.error('스트리머: PeerConnection이 없습니다, viewer:', data.fromSocketId);
     }
   };
 
@@ -1098,18 +1152,31 @@ const PDFFeedbackBoard: React.FC = () => {
       // 로컬 스트림이 준비된 후에 시그널링 서버에 연결
       connectToSignalingServer();
 
-      // 약간의 지연 후 스트림 시작 알림 및 대기 중인 뷰어 처리
-      setTimeout(() => {
-        if (socketRef.current) {
-          console.log('🔴 스트리머: 시그널링 서버에 스트림 시작 알림 전송, streamId:', streamId);
-          socketRef.current.emit('start-stream', { streamId });
+      // 소켓 연결 완료를 기다린 후 스트림 시작 알림
+      const waitForSocketAndStart = () => {
+        const checkInterval = setInterval(() => {
+          if (socketRef.current?.connected) {
+            clearInterval(checkInterval);
+            console.log('🔴 스트리머: 시그널링 서버에 스트림 시작 알림 전송, streamId:', streamId);
+            socketRef.current.emit('start-stream', { streamId });
 
-          // 대기 중인 뷰어들 처리
-          processPendingViewers();
-        } else {
-          console.error('🔴 스트리머: 시그널링 서버가 아직 연결되지 않음');
-        }
-      }, 2000);
+            // 대기 중인 뷰어들 처리
+            processPendingViewers();
+          } else {
+            console.log('🔴 스트리머: 소켓 연결 대기 중...');
+          }
+        }, 200);
+
+        // 10초 후에도 연결 안 되면 타임아웃
+        setTimeout(() => {
+          clearInterval(checkInterval);
+          if (!socketRef.current?.connected) {
+            console.error('🔴 스트리머: 시그널링 서버 연결 타임아웃');
+            setConnectionStatus('failed');
+          }
+        }, 10000);
+      };
+      waitForSocketAndStart();
 
       // 스트림 종료 이벤트 처리
       finalStream.getVideoTracks()[0].addEventListener('ended', () => {
@@ -1152,7 +1219,13 @@ const PDFFeedbackBoard: React.FC = () => {
       socketRef.current = null;
     }
 
-    // Peer connection 정리
+    // 모든 Peer connection 정리
+    peerConnectionsRef.current.forEach((pc, viewerId) => {
+      console.log('PeerConnection 정리:', viewerId);
+      pc.close();
+    });
+    peerConnectionsRef.current.clear();
+    
     if (peerConnectionRef.current) {
       peerConnectionRef.current.close();
       peerConnectionRef.current = null;

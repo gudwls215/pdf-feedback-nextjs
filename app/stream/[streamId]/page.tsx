@@ -27,15 +27,44 @@ const StreamViewer: React.FC = () => {
   const connectionTimeRef = useRef<NodeJS.Timeout | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
-  // WebRTC 설정
+  // WebRTC 설정 - TURN 서버 (자체 coturn + 공용 TURN 폴백)
+  const turnUrl = process.env.NEXT_PUBLIC_TURN_SERVER_URL || '';
+  const turnUser = process.env.NEXT_PUBLIC_TURN_USERNAME || '';
+  const turnCred = process.env.NEXT_PUBLIC_TURN_CREDENTIAL || '';
+
   const rtcConfiguration: RTCConfiguration = {
     iceServers: [
-      { urls: 'stun:stun.l.google.com:19302' }
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      // 자체 TURN 서버 (UDP + TCP)
+      ...(turnUrl ? [
+        { urls: turnUrl, username: turnUser, credential: turnCred },
+        { urls: turnUrl.replace(':3478', ':3478?transport=tcp'), username: turnUser, credential: turnCred },
+      ] : []),
+      // 공용 TURN 서버 폴백 (자체 TURN 서버 연결 실패 시 사용)
+      {
+        urls: [
+          'turn:openrelay.metered.ca:80',
+          'turn:openrelay.metered.ca:80?transport=tcp',
+          'turn:openrelay.metered.ca:443',
+          'turn:openrelay.metered.ca:443?transport=tcp',
+        ],
+        username: 'openrelayproject',
+        credential: 'openrelayproject',
+      },
     ],
-    // 더 높은 품질을 위한 추가 설정
     bundlePolicy: 'max-bundle' as RTCBundlePolicy,
-    rtcpMuxPolicy: 'require' as RTCRtcpMuxPolicy
+    rtcpMuxPolicy: 'require' as RTCRtcpMuxPolicy,
+    iceTransportPolicy: 'all' as RTCIceTransportPolicy,
+    iceCandidatePoolSize: 1,
   };
+
+  console.log('ICE 설정:', {
+    turnUrl: turnUrl || '(없음)',
+    hasTurn: !!turnUrl,
+    totalIceServers: rtcConfiguration.iceServers?.length,
+    servers: rtcConfiguration.iceServers?.map(s => typeof s.urls === 'string' ? s.urls : s.urls?.[0]),
+  });
 
   // 연결 시간 타이머
   useEffect(() => {
@@ -217,15 +246,25 @@ const StreamViewer: React.FC = () => {
 
         };
 
-        // ICE candidate 이벤트
+        // ICE candidate 이벤트 - 상세 로깅 포함
+        const candidateStats = { host: 0, srflx: 0, relay: 0, prflx: 0 };
         peerConnection.onicecandidate = (event) => {
           if (event.candidate && socketRef.current) {
-            console.log('뷰어: ICE candidate 전송:', event.candidate);
+            const c = event.candidate;
+            const cType = c.type || 'unknown';
+            if (cType in candidateStats) candidateStats[cType as keyof typeof candidateStats]++;
+            console.log(`뷰어: ICE candidate [${cType}] ${c.protocol} ${c.address}:${c.port} relay=${c.relatedAddress || 'N/A'}`);
             socketRef.current.emit('ice-candidate', {
               candidate: event.candidate,
               targetSocketId: hostSocketId,
               streamId
             });
+          } else if (!event.candidate) {
+            // ICE gathering 완료
+            console.log('뷰어: ICE gathering 완료. 후보 통계:', JSON.stringify(candidateStats));
+            if (candidateStats.relay === 0) {
+              console.warn('⚠️ 뷰어: relay(TURN) 후보가 0개입니다! TURN 서버에 접근할 수 없습니다. NAT 환경에서 연결 실패 가능성 높음.');
+            }
           }
         };
 
@@ -263,18 +302,45 @@ const StreamViewer: React.FC = () => {
               }, 1000);
               break;
             case 'disconnected':
+              console.log('뷰어: WebRTC 연결 해제, 재연결 시도...');
+              // disconnected는 일시적일 수 있으므로 바로 에러 표시하지 않음
+              setTimeout(() => {
+                if (peerConnection.connectionState === 'disconnected') {
+                  if (!error) setError('WebRTC 연결이 해제되었습니다. 재연결을 시도합니다...');
+                  setIsConnected(false);
+                }
+              }, 5000);
+              break;
             case 'closed':
-              console.log('뷰어: WebRTC 연결 해제');
+              console.log('뷰어: WebRTC 연결 종료');
               if (!error) setError('WebRTC 연결이 해제되었습니다.');
               setIsConnected(false);
               break;
             case 'failed':
               console.error('뷰어: WebRTC 연결 실패');
-              setError('WebRTC 연결에 실패했습니다. 네트워크 상태를 확인하거나 다시 시도해주세요.');
+              setError('WebRTC 연결에 실패했습니다. 네트워크 상태를 확인하거나 다시 시도해주세요. (NAT/방화벽 환경에서 TURN 서버가 필요할 수 있습니다)');
               setIsConnected(false);
               setIsLoading(false);
               break;
           }
+        };
+
+        // ICE 연결 상태 모니터링 (더 세밀한 디버깅)
+        peerConnection.oniceconnectionstatechange = () => {
+          console.log('뷰어: ICE connection state:', peerConnection.iceConnectionState);
+          if (peerConnection.iceConnectionState === 'failed') {
+            console.error('뷰어: ICE 연결 실패 - TURN 서버가 필요할 수 있습니다');
+            // ICE restart 시도
+            if (peerConnectionRef.current === peerConnection) {
+              console.log('뷰어: ICE restart 시도...');
+              peerConnection.restartIce();
+            }
+          }
+        };
+
+        // ICE gathering 상태 모니터링
+        peerConnection.onicegatheringstatechange = () => {
+          console.log('뷰어: ICE gathering state:', peerConnection.iceGatheringState);
         };
 
         console.log('뷰어: Peer connection 설정 완료, offer 대기 중...');

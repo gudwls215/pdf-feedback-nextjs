@@ -1,4 +1,13 @@
 services:
+  # TURN 서버 (coturn) - NAT/방화벽 환경에서 WebRTC 연결을 위한 릴레이
+  turn-server:
+    image: coturn/coturn:latest
+    container_name: pdf-feedback-turn
+    network_mode: host
+    volumes:
+      - ./turnserver.conf:/etc/coturn/turnserver.conf:ro
+    restart: unless-stopped
+
   # 시그널링 서버
   signaling-server:
     build:
@@ -16,9 +25,11 @@ services:
 
   # 메인 Next.js 애플리케이션
   web-app:
+    image: pdf-feedback-app
     build:
       context: .
       dockerfile: Dockerfile
+      network: host
     container_name: pdf-feedback-web
     ports:
       - "4000:4000"
