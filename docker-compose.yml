@@ -1,13 +1,4 @@
 services:
-  # TURN 서버 (coturn) - NAT/방화벽 환경에서 WebRTC 연결을 위한 릴레이
-  turn-server:
-    image: coturn/coturn:latest
-    container_name: pdf-feedback-turn
-    network_mode: host
-    volumes:
-      - ./turnserver.conf:/etc/coturn/turnserver.conf:ro
-    restart: unless-stopped
-
   # 시그널링 서버
   signaling-server:
     build:
@@ -15,24 +6,33 @@ services:
       dockerfile: Dockerfile
     container_name: pdf-feedback-signaling
     ports:
-      - "4001:4001"
+      - "127.0.0.1:4001:4001"
     environment:
       - NODE_ENV=production
       - PORT=4001
+      - ALLOWED_ORIGIN=https://pdf.glotos.com
     restart: unless-stopped
     networks:
       - pdf-feedback-network
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
 
   # 메인 Next.js 애플리케이션
   web-app:
-    image: pdf-feedback-app
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
     build:
       context: .
       dockerfile: Dockerfile
-      network: host
     container_name: pdf-feedback-web
     ports:
-      - "4000:4000"
+      - "127.0.0.1:4000:4000"
     environment:
       - NODE_ENV=production
       - PORT=4000

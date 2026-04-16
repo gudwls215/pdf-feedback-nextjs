@@ -6,15 +6,17 @@ const cors = require('cors');
 const app = express();
 const server = http.createServer(app);
 
-// CORS 설정
+// CORS 설정 - 환경변수로 허용 origin 제한
+const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || 'https://pdf.glotos.com';
+
 app.use(cors({
-  origin: true,
+  origin: ALLOWED_ORIGIN,
   credentials: true
 }));
 
 const io = socketIo(server, {
   cors: {
-    origin: true,
+    origin: ALLOWED_ORIGIN,
     methods: ["GET", "POST"],
     credentials: true
   }
@@ -24,10 +26,7 @@ const io = socketIo(server, {
 const activeStreams = new Map();
 
 app.get('/', (req, res) => {
-  res.json({ 
-    message: 'WebRTC Signaling Server', 
-    activeStreams: Array.from(activeStreams.keys())
-  });
+  res.json({ message: 'WebRTC Signaling Server' });
 });
 
 io.on('connection', (socket) => {
